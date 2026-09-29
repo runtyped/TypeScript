@@ -16,6 +16,7 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/transformers/inliners"
 	"github.com/microsoft/TypeScript/tsc/internal/transformers/jsxtransforms"
 	"github.com/microsoft/TypeScript/tsc/internal/transformers/moduletransforms"
+	"github.com/microsoft/TypeScript/tsc/internal/transformers/runtyped"
 	"github.com/microsoft/TypeScript/tsc/internal/transformers/tstransforms"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
@@ -84,6 +85,8 @@ func (e *emitter) runDeclarationTransformers(emitContext *printer.EmitContext, s
 		sourceFile = transformer.TransformSourceFile(sourceFile)
 		diags = append(diags, transformer.GetDiagnostics()...)
 	}
+	// Runtyped declaration transformer — appends __Ω type aliases to .d.ts output
+	sourceFile = runtyped.NewDeclarationTransformer(emitContext).TransformSourceFile(sourceFile)
 	return sourceFile, diags
 }
 
@@ -132,7 +135,12 @@ func getScriptTransformers(emitContext *printer.EmitContext, host printer.EmitHo
 		Resolver:                  referenceResolver,
 		EmitResolver:              emitResolver,
 		GetEmitModuleFormatOfFile: host.GetEmitModuleFormatOfFile,
+		SourceFiles:               host.SourceFiles,
 	}
+
+	// Runtyped reflection transformer — must run BEFORE type erasure
+	// so it can see type annotations while they still exist in the AST
+	tx = append(tx, runtyped.NewReflectionTransformer(&opts))
 
 	// transform TypeScript syntax
 	{

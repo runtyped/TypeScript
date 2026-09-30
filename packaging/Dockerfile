@@ -40,4 +40,4 @@ RUN ./binaries/tsc-linux-amd64 --version
 
 # The tarball is written to /out, which is a mounted volume in the
 # documented usage — it appears on the host with no further steps.
-RUN npm pack --pack-destination /out
+RUN mkdir -p /out && npm pack --pack-destination /out

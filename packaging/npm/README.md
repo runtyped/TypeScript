@@ -32,5 +32,7 @@ install time.
 
 ## Versioning
 
-`<upstream-version>-runtyped.<n>` — e.g. `7.0.2-runtyped.1` is the first
-runtyped release on top of upstream 7.0.2.
+`<upstream-version>-runtyped.<n>`, where the upstream part matches the
+version the compiler binary itself reports (`tsc --version`) — e.g.
+`7.1.0-runtyped.0` is the first runtyped release on top of a compiler
+reporting 7.1.0-dev.

@@ -38,6 +38,9 @@ COPY --from=build /build/binaries/ ./binaries/
 # Smoke test: the linux/amd64 binary must run inside this container.
 RUN ./binaries/tsc-linux-amd64 --version
 
-# The tarball is written to /out, which is a mounted volume in the
-# documented usage — it appears on the host with no further steps.
-RUN mkdir -p /out && npm pack --pack-destination /out
+# The tarball is baked into the image at /pkg-out. A bind-mount over /out
+# at run time SHADOWS image content, so the container entrypoint copies
+# the tarball into /out — the mounted volume — making it appear on the host.
+RUN mkdir -p /pkg-out && npm pack --pack-destination /pkg-out
+
+CMD ["sh", "-c", "mkdir -p /out && cp /pkg-out/*.tgz /out/"]

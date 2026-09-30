@@ -1532,6 +1532,38 @@ func (tc *typeCompiler) packOpsAndStack(program *compilerProgram, emitAnyForEmpt
 	return tc.valueToExpression(entries)
 }
 
+// convertStackNodeToExpression mirrors the original type-compiler's
+// NodeConverter.toExpression (reflection-ast.ts): stack entries can reference nodes
+// from another source file (e.g. a literal type originating in a lib .d.ts reached
+// through cross-file type resolution). Reusing such a node as-is embeds foreign
+// pos/end values into this file's AST, and the printer then slices the CURRENT
+// file's text with positions from the other file — a fatal panic in the native
+// port (slice bounds out of range) instead of upstream's mangled output.
+//
+// Mirroring upstream: synthesized nodes (no source range, no parent) are reused
+// as-is; literal-like nodes are re-created fresh from their semantic text;
+// everything else is deep-cloned with synthetic locations.
+func (tc *typeCompiler) convertStackNodeToExpression(node *ast.Node) *ast.Node {
+	if ast.PositionIsSynthesized(node.Pos()) && ast.PositionIsSynthesized(node.End()) && node.Parent == nil {
+		return node
+	}
+	switch node.Kind {
+	case ast.KindIdentifier:
+		return tc.factory.NewIdentifier(node.Text())
+	case ast.KindStringLiteral:
+		return tc.factory.NewStringLiteral(node.Text(), node.AsStringLiteral().TokenFlags)
+	case ast.KindNumericLiteral:
+		return tc.factory.NewNumericLiteral(node.Text(), node.AsNumericLiteral().TokenFlags)
+	case ast.KindBigIntLiteral:
+		return tc.factory.NewBigIntLiteral(node.Text(), node.AsBigIntLiteral().TokenFlags)
+	case ast.KindTrueKeyword:
+		return tc.factory.NewKeywordExpression(ast.KindTrueKeyword)
+	case ast.KindFalseKeyword:
+		return tc.factory.NewKeywordExpression(ast.KindFalseKeyword)
+	}
+	return tc.factory.DeepCloneNode(node)
+}
+
 // valueToExpression converts stack entries into a JavaScript array literal expression.
 func (tc *typeCompiler) valueToExpression(entries []stackEntry) *ast.Node {
 	elements := make([]*ast.Node, 0, len(entries))
@@ -1539,7 +1571,7 @@ func (tc *typeCompiler) valueToExpression(entries []stackEntry) *ast.Node {
 		var expr *ast.Node
 		switch entry.kind {
 		case stackEntryNode:
-			expr = entry.node
+			expr = tc.convertStackNodeToExpression(entry.node)
 		case stackEntryString:
 			expr = tc.factory.NewStringLiteral(entry.str, ast.TokenFlagsNone)
 		case stackEntryNumber:

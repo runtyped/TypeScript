@@ -4,19 +4,19 @@
 # no emulation or platform-specific machines required (CGO_ENABLED=0).
 #
 # Usage (from the repository root):
-#   docker build -t runtyped-typescript-pkg -f packaging/Dockerfile .
-#   docker run --rm -v "$(pwd)/packaging/dist:/out" runtyped-typescript-pkg
+#   docker build -t runtyped-typescript-pkg -f packages/typescript-runtyped/Dockerfile .
+#   docker run --rm -v "$(pwd)/packages/typescript-runtyped/dist:/out" runtyped-typescript-pkg
 #
-# Output: packaging/dist/runtyped-typescript-<version>.tgz
+# Output: packages/typescript-runtyped/dist/runtyped-typescript-<version>.tgz
 #
 # Publish:
-#   npm publish packaging/dist/*.tgz --access public
+#   npm publish packages/typescript-runtyped/dist/*.tgz --access public
 # (or run `npm publish` inside the assemble stage with NPM_TOKEN in CI)
 
 FROM golang:1.27-alpine AS build
 
 WORKDIR /src
-COPY tsc/ ./tsc/
+COPY ../tsc/ ./tsc/
 
 RUN set -eux; \
     cd /src/tsc/cmd/tsc; \
@@ -32,7 +32,7 @@ RUN set -eux; \
 FROM node:22-alpine AS assemble
 
 WORKDIR /pkg
-COPY packaging/npm/ ./
+COPY ./packages/typescript-runtyped/npm/ ./
 COPY --from=build /build/binaries/ ./binaries/
 
 # Smoke test: the linux/amd64 binary must run inside this container.

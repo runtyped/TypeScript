@@ -32,7 +32,9 @@ install time.
 
 ## Versioning
 
-`<upstream-version>-runtyped.<n>`, where the upstream part matches the
-version the compiler binary itself reports (`tsc --version`) — e.g.
-`7.1.0-runtyped.0` is the first runtyped release on top of a compiler
-reporting 7.1.0-dev.
+Versioning of `@runtyped/typescript` matches that of the upstream `typescript`
+package in its major and minor components. The patch component is reserved for
+runtyped itself.
+
+Example: `@runtyped/typescript@7.1.0` is the first release built upon `7.1.x`
+versions of upstream `typescript`.

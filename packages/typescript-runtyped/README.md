@@ -26,30 +26,29 @@ the esbuild model: per-platform packages (`@runtyped/typescript-linux-x64`,
 From the repository root:
 
 ```sh
-docker build -t runtyped-typescript-pkg -f packaging/Dockerfile .
-docker run --rm -v "$(pwd)/packaging/dist:/out" runtyped-typescript-pkg
+docker build -t runtyped-typescript-pkg -f packages/typescript-runtyped/Dockerfile .
+docker run --rm -v "$(pwd)/packages/typescript-runtyped/dist:/out" runtyped-typescript-pkg
 ```
 
-Output: `packaging/dist/runtyped-typescript-<version>.tgz`
+Output: `packages/typescript-runtyped/dist/runtyped-typescript-<version>.tgz`
 
 ## Verify before publishing
 
 ```sh
-tar -tzf packaging/dist/*.tgz            # inspect contents
-tar -xzf packaging/dist/*.tgz -C /tmp && cd /tmp/package
+tar -tzf packages/typescript-runtyped/dist/*.tgz            # inspect contents
+tar -xzf packages/typescript-runtyped/dist/*.tgz -C /tmp && cd /tmp/package
 ./bin/tsc.js --version                    # runs the launcher + native binary
 ```
 
 ## Publish
 
 ```sh
-npm publish packaging/dist/*.tgz --access public
+npm publish packages/typescript-runtyped/dist/*.tgz --access public
 ```
 
 In CI, publish from the assemble stage with `NPM_TOKEN` provided instead.
 
 ## Releasing
 
-1. Bump `version` in `packaging/npm/package.json`
-   (`<upstream-version>-runtyped.<n>`, e.g. `7.0.2-runtyped.2`).
+1. Bump `version` in `packages/typescript-runtyped/npm/package.json` to upstream version.
 2. Rebuild the image, verify, publish.

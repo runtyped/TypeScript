@@ -1,0 +1,43 @@
+# Builds and assembles the @runtyped/typescript npm package.
+#
+# Pure-Go cross-compilation: one Linux builder produces all targets,
+# no emulation or platform-specific machines required (CGO_ENABLED=0).
+#
+# Usage (from the repository root):
+#   docker build -t runtyped-typescript-pkg -f packaging/Dockerfile .
+#   docker run --rm -v "$(pwd)/packaging/dist:/out" runtyped-typescript-pkg
+#
+# Output: packaging/dist/runtyped-typescript-<version>.tgz
+#
+# Publish:
+#   npm publish packaging/dist/*.tgz --access public
+# (or run `npm publish` inside the assemble stage with NPM_TOKEN in CI)
+
+FROM golang:1.27-alpine AS build
+
+WORKDIR /src
+COPY tsc/ ./tsc/
+
+RUN set -eux; \
+    cd /src/tsc/cmd/tsc; \
+    mkdir -p /build/binaries; \
+    for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do \
+        os="${target%/*}"; arch="${target#*/}"; \
+        ext=""; [ "$os" = "windows" ] && ext=".exe"; \
+        GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 GOWORK=off \
+        go build -trimpath -ldflags="-s -w" \
+            -o "/build/binaries/tsc-$os-$arch$ext" .; \
+    done
+
+FROM node:22-alpine AS assemble
+
+WORKDIR /pkg
+COPY packaging/npm/ ./
+COPY --from=build /build/binaries/ ./binaries/
+
+# Smoke test: the linux/amd64 binary must run inside this container.
+RUN ./binaries/tsc-linux-amd64 --version
+
+# The tarball is written to /out, which is a mounted volume in the
+# documented usage — it appears on the host with no further steps.
+RUN npm pack --pack-destination /out

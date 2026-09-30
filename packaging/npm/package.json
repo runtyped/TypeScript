@@ -1,0 +1,36 @@
+{
+  "name": "@runtyped/typescript",
+  "version": "7.0.2-runtyped.1",
+  "description": "The runtyped TypeScript compiler: tsc with always-on runtime type reflection. Native Go binary (fork of microsoft/TypeScript's native compiler); compiling with this tsc is the opt-in.",
+  "license": "Apache-2.0",
+  "bin": {
+    "tsc": "bin/tsc.js"
+  },
+  "files": [
+    "bin/",
+    "binaries/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/runtyped/TypeScript.git"
+  },
+  "keywords": [
+    "typescript",
+    "tsc",
+    "compiler",
+    "runtime-type-reflection",
+    "runtyped"
+  ],
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

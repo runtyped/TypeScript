@@ -1586,45 +1586,21 @@ func (tx *reflectionTransformer) handleAutoTypeFunction(node *ast.Node, isNew bo
 
 // ─── Imports ───
 
+// Import declarations are passed through unchanged.
+//
+// Ω imports for imported types are NOT derived from import declarations —
+// that approach (an unconditional `import { __ΩX }` clone per named import)
+// emitted phantom imports for every non-type binding (values, functions,
+// classes have no __Ω export, which is a fatal SyntaxError under ESM) and
+// duplicated the serializer-driven imports added by processDeclarations
+// (a fatal "Identifier has already been declared" under ESM).
+//
+// The single source of truth for Ω imports is tc.addImports, populated when
+// the serializer actually references an imported type's __Ω symbol — mirroring
+// the original TypeScript type-compiler (packages/type-compiler/compiler.ts),
+// which has no import-cloning visitor at all.
 func (tx *reflectionTransformer) visitImportDeclaration(node *ast.ImportDeclaration) *ast.Node {
-	visited := tx.Visitor().VisitEachChild(node.AsNode()).AsImportDeclaration()
-
-	// Check if this import has named imports
-	if visited.ImportClause == nil {
-		return visited.AsNode()
-	}
-
-	clause := visited.ImportClause.AsImportClause()
-	if clause.NamedBindings == nil {
-		return visited.AsNode()
-	}
-
-	if clause.NamedBindings.Kind != ast.KindNamedImports {
-		return visited.AsNode()
-	}
-
-	namedImports := clause.NamedBindings.AsNamedImports()
-	if namedImports.Elements == nil || len(namedImports.Elements.Nodes) == 0 {
-		return visited.AsNode()
-	}
-
-	// For each imported name, add __Ω{name} to a new import from the same module
-	var omegaSpecifiers []*ast.Node
-	for _, spec := range namedImports.Elements.Nodes {
-		specNode := spec.AsImportSpecifier()
-		name := specNode.Name().AsIdentifier().Text
-		omegaName := tx.Factory().NewIdentifier("__Ω" + name)
-		omegaSpecifiers = append(omegaSpecifiers, tx.Factory().NewImportSpecifier(false, nil, omegaName))
-	}
-
-	if len(omegaSpecifiers) > 0 {
-		newNamedImports := tx.Factory().NewNamedImports(tx.Factory().NewNodeList(omegaSpecifiers))
-		newImportClause := tx.Factory().NewImportClause(ast.KindUnknown, nil, newNamedImports)
-		newImport := tx.Factory().NewImportDeclaration(nil, newImportClause, visited.ModuleSpecifier, nil)
-		tx.additionalImports = append(tx.additionalImports, newImport)
-	}
-
-	return visited.AsNode()
+	return tx.Visitor().VisitEachChild(node.AsNode())
 }
 
 // ─── Exports (re-exports) ───

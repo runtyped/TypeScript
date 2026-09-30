@@ -110,15 +110,21 @@ type Foo = string;
 type Bar = number;`,
 		},
 		// ─── Imports ───
+		// Single-file: Ω imports are only added when the serializer references an
+		// imported type's __Ω symbol (which requires cross-file resolution), so a
+		// bare import — even of a type — adds no import. Cloning __Ω names from
+		// import declarations unconditionally emitted phantom imports for value
+		// bindings (no __Ω export → fatal ESM SyntaxError) and duplicated the
+		// serializer-driven imports (duplicate binding → fatal ESM SyntaxError).
 		{
 			title:  "NamedImport",
 			input:  "import { User } from './models';",
-			output: "import { User } from './models';\nimport { __ΩUser } from './models';",
+			output: "import { User } from './models';",
 		},
 		{
 			title:  "MultipleNamedImports",
 			input:  "import { User, Post } from './models';",
-			output: "import { User, Post } from './models';\nimport { __ΩUser, __ΩPost } from './models';",
+			output: "import { User, Post } from './models';",
 		},
 		// ─── Re-exports ───
 		// Single-file: without cross-file resolution (no EmitResolver/SourceFiles),
@@ -146,8 +152,7 @@ class User {
 class Service {
     user: User;
     static __type = ["user", "Service", "!3!5w\""];
-}
-import { __ΩUser } from './models';`,
+}`,
 		},
 	}
 
@@ -207,6 +212,8 @@ function add(a, b) { return a + b; }`,
 export { __ΩFoo as __ΩFoo };`,
 		},
 		// ─── Imports: original import kept (import elision is a separate transformer) ───
+		// Single-file: no Ω import is added — see the Imports section of
+		// TestReflectionTransformer for the rationale.
 		{
 			title:  "ImportWithClass",
 			input:  "import { User } from './models';\nclass Service { user: User; }",
@@ -214,8 +221,7 @@ export { __ΩFoo as __ΩFoo };`,
 class Service {
     user;
     static __type = ["user", "Service", "!3!5w\""];
-}
-import { __ΩUser } from './models';`,
+}`,
 		},
 		// ─── Re-exports: original re-export kept (import elision is a separate transformer) ───
 		// Single-file: no __Ω re-export without cross-file resolution.

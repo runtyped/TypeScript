@@ -78,17 +78,27 @@ A small JavaScript wrapper selects the right binary at run time.
 
 ## Versioning
 
-Versioning of `@runtyped/typescript` matches that of the upstream [typescript]
-package in its major and minor components. The patch component is reserved for
-runtyped itself.
+Versioning of `@runtyped/typescript` is aligned to the reflection format it
+emits rather than to upstream TypeScript. The major component is the format
+era and moves in lockstep with `@runtyped/type` — same major version means
+the same, compatible format era. The minor component carries
+format-compatible changes; the patch component carries fixes and rebases,
+and every rebase onto a new upstream TypeScript bumps the patch, so rebase
+releases remain visible to range-based dependency updates.
 
-Example: `@runtyped/typescript@7.1.0` is the first release built upon the `7.1`
-line of upstream [typescript], including in-development snapshots of upstream
-`main` at packaging time (upstream's most recent published release may lag
-behind). `@runtyped/typescript@7.1.1` is the same line plus one runtyped patch.
+The upstream TypeScript version this compiler is built upon is carried as
+build metadata, informational only — it never takes part in version
+precedence or range matching. Example:
+`@runtyped/typescript@2.0.0+typescript.7.1.0` is the first release of format
+era 2, built on the `7.1` line of upstream [typescript], including
+in-development snapshots of upstream `main` at packaging time (upstream's
+most recent published release may lag behind).
 
-For how `@runtyped/typescript` versions relate to [@runtyped/type] versions,
-see the [Runtyped versioning strategy].
+`@runtyped/typescript` declares a `peerDependencies` requirement on
+[@runtyped/type] covering its era, so the package manager itself refuses
+mismatched combinations.
+
+For the full scheme, see the [Runtyped versioning strategy].
 
 ## Credits
 

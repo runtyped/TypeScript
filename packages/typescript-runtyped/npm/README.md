@@ -86,10 +86,12 @@ format-compatible changes; the patch component carries fixes and rebases,
 and every rebase onto a new upstream TypeScript bumps the patch, so rebase
 releases remain visible to range-based dependency updates.
 
-The upstream TypeScript version this compiler is built upon is carried as
-build metadata, informational only — it never takes part in version
-precedence or range matching. Example:
-`@runtyped/typescript@2.0.0+typescript.7.1.0` is the first release of format
+The upstream TypeScript version this compiler is built upon is declared as
+build metadata and as a `typescriptBase` field in the package manifest —
+informational only, never part of version precedence or range matching. The
+npm registry strips build metadata from the published version listing, so
+the manifest field is the durable carrier. Example:
+`@runtyped/typescript@2.0.0+typescript.7.1` is the first release of format
 era 2, built on the `7.1` line of upstream [typescript], including
 in-development snapshots of upstream `main` at packaging time (upstream's
 most recent published release may lag behind).

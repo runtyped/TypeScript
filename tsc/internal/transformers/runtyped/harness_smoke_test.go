@@ -1628,3 +1628,63 @@ class App {
 		})
 	}
 }
+
+// TestReceiveTypeCallInsideWrappedFunction pins the contract that receive-type
+// call-site type passing SURVIVES __assignType wrapping. visitArrowFunction and
+// visitFunctionExpression used to wrap the ORIGINAL function node instead of the
+// visited one, silently discarding every body transformation (receive-type
+// direct passing, Ω side-channel assignments, optional-chain rewrites). Seen in
+// the wild: cast<Config>(toml) inside an arrow emitted as bare cast(toml), and
+// the runtime threw NoTypeReceived at module load — loom could not even start
+// (loom PR jacoscaz/loom#66 carries the loom-side story).
+func TestReceiveTypeCallInsideWrappedFunction(t *testing.T) {
+	t.Parallel()
+
+	compilerOptions := &core.CompilerOptions{
+		Module:           core.ModuleKindCommonJS,
+		ModuleResolution: core.ModuleResolutionKindNode10,
+		Target:           core.ScriptTargetES2020,
+	}
+
+	content := `function localCast<T>(data: any, type?: ReceiveType<T>): any { return data; }
+interface ICfg { a: number }
+export const arrowConcise = (x: any): ICfg => localCast<ICfg>(x);
+export const arrowBlock = (x: any): ICfg => { const r = localCast<ICfg>(x); return r; };
+export const fnExpr = function (x: any): ICfg { return localCast<ICfg>(x); };
+export function fnDecl(x: any): ICfg { return localCast<ICfg>(x); }`
+
+	inputFiles := []*harnessutil.TestFile{
+		{UnitName: "app.ts", Content: content},
+	}
+
+	result := harnessutil.CompileFiles(t,
+		inputFiles,
+		nil,
+		harnessutil.TestConfiguration{},
+		&tsoptions.ParsedCommandLine{
+			ParsedConfig: &tsoptions.ParsedOptions{
+				CompilerOptions: compilerOptions,
+				FileNames:       []string{"/app.ts"},
+			},
+		},
+		"/",
+		nil,
+	)
+
+	appJS := result.JS.GetOrZero("/app.js")
+	if appJS == nil {
+		t.Fatal("no app.js output")
+	}
+	t.Logf("app.js:\n%s", appJS.Content)
+
+	// Every one of the four declarations must pass the type argument to
+	// localCast — no bare localCast(x) anywhere in the output, and all four
+	// call sites carry the encoded type (CJS export hoisting reorders the
+	// assignments, so count call sites instead of matching lines).
+	if strings.Contains(appJS.Content, "localCast(x)") {
+		t.Errorf("found a receive-type call that lost its type argument:\n%s", appJS.Content)
+	}
+	if n := strings.Count(appJS.Content, "localCast(x, ["); n != 4 {
+		t.Errorf("expected 4 receive-type call sites with a passed type argument, found %d:\n%s", n, appJS.Content)
+	}
+}

@@ -543,7 +543,11 @@ func (tx *reflectionTransformer) visitFunctionExpression(node *ast.Node) *ast.No
 	}
 
 	tx.tc.embedAssignType = true
-	return tx.wrapWithAssignType(node, encodedType)
+	// Wrap the VISITED function expression, not the original node: `visited`
+	// carries the transformations applied while descending into the body
+	// (receive-type call-site type passing, Ω side-channel assignments,
+	// optional-chain rewrites). Wrapping the original discards all of them.
+	return tx.wrapWithAssignType(visited.AsNode(), encodedType)
 }
 
 func (tx *reflectionTransformer) visitArrowFunction(node *ast.Node) *ast.Node {
@@ -562,7 +566,10 @@ func (tx *reflectionTransformer) visitArrowFunction(node *ast.Node) *ast.Node {
 	}
 
 	tx.tc.embedAssignType = true
-	return tx.wrapWithAssignType(node, encodedType)
+	// Wrap the VISITED arrow, not the original node — same reason as in
+	// visitFunctionExpression: `visited` carries the body transformations
+	// (call-site type passing etc.) that the original node lacks.
+	return tx.wrapWithAssignType(visited.AsNode(), encodedType)
 }
 
 // createFunctionExpressionFromDeclaration converts a FunctionDeclaration to a FunctionExpression,

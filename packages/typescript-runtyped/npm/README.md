@@ -3,10 +3,34 @@
 A fork of Microsoft's official TypeScript compiler that extends upstream with
 runtime type reflection. Use with [@runtyped/type].
 
+## Why
+
+TypeScript types disappear at run time. With this compiler they don't:
+
+```typescript
+import { cast } from '@runtyped/type';
+
+interface User {
+  id: number;
+  registered: Date;
+  username: string;
+}
+
+const user = cast<User>(JSON.parse(input));
+user.registered instanceof Date; // true
+```
+
+No decorators, no schema duplication, no code-generation step: your types are
+reflected into run-time values, and [@runtyped/type] puts them to work for
+validation, serialization, JSON Schema generation and more.
+
 ## Usage
 
-`@runtyped/typescript` is a drop-in replacement for the official compiler. 
+`@runtyped/typescript` is a drop-in replacement for the official compiler.
 It is designed to be installed and used exactly as the [typescript] package.
+There are no flags to enable and no code changes to make: compiling with this
+compiler is the opt-in, and everything that works upstream works exactly as
+before.
 
 Install it as a dependency using `npm` or `yarn`:
 
@@ -33,6 +57,9 @@ Add it to your `package.json` scripts:
 }
 ```
 
+Compiled output gains type-reflection data consumed by [@runtyped/type] at
+run time; this package itself is only needed at build time.
+
 This package is the compile-time counterpart to [@runtyped/type].
 
 ## Binaries
@@ -47,7 +74,7 @@ As such, this package ships with pre-built binaries for the following targets:
 - `windows/amd64`
 - `windows/arm64`
 
-A small javascript wrapper selects the right binary at runtime.
+A small JavaScript wrapper selects the right binary at run time.
 
 ## Versioning
 
@@ -55,15 +82,20 @@ Versioning of `@runtyped/typescript` matches that of the upstream [typescript]
 package in its major and minor components. The patch component is reserved for
 runtyped itself.
 
-Example: `@runtyped/typescript@7.1.0` is the first release built upon `7.1.x`
-versions of upstream [typescript].
+Example: `@runtyped/typescript@7.1.0` is the first release built upon the `7.1`
+line of upstream [typescript], including in-development snapshots of upstream
+`main` at packaging time (upstream's most recent published release may lag
+behind). `@runtyped/typescript@7.1.1` is the same line plus one runtyped patch.
+
+For how `@runtyped/typescript` versions relate to [@runtyped/type] versions,
+see the [Runtyped versioning strategy].
 
 ## Credits
 
 Being a patchset atop of [typescript], `@runtyped/typescript` builds upon all
 of the incredible work done by the TypeScript maintainers and contributors.
 
-Additionally, the Runtyped project started out as a selective fork of the 
+Additionally, the Runtyped project started out as a selective fork of the
 astounding [DeepKit] framework, focusing solely on its type reflection modules.
 All credit for Runtyped's approach to type reflection goes to Marc J. Schmidt
 ([@marcj]). For more information see [Relationship to DeepKit].
@@ -79,3 +111,4 @@ APACHE-2.0, just like the official [typescript] package.
 [typescript]: https://www.npmjs.com/package/typescript
 [@runtyped/type]: https://www.npmjs.com/package/@runtyped/type
 [Relationship to DeepKit]: https://github.com/runtyped/runtyped#relationship-to-deepkit
+[Runtyped versioning strategy]: https://github.com/runtyped/runtyped#versioning

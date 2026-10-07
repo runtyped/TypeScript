@@ -1,6 +1,6 @@
 {
   "name": "@runtyped/typescript",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "The runtyped TypeScript compiler: tsc with always-on runtime type reflection. Native Go binary (fork of microsoft/TypeScript's native compiler); compiling with this tsc is the opt-in.",
   "license": "Apache-2.0",
   "bin": {

@@ -79,26 +79,8 @@ A small JavaScript wrapper selects the right binary at run time.
 ## Versioning
 
 Versioning of `@runtyped/typescript` is aligned to the reflection format it
-emits rather than to upstream TypeScript. The major component is the format
-era and moves in lockstep with `@runtyped/type` — same major version means
-the same, compatible format era. The minor component carries
-format-compatible changes; the patch component carries fixes and rebases,
-and every rebase onto a new upstream TypeScript bumps the patch, so rebase
-releases remain visible to range-based dependency updates.
-
-The upstream TypeScript version this compiler is built upon is declared as
-build metadata and as a `typescriptBase` field in the package manifest —
-informational only, never part of version precedence or range matching. The
-npm registry strips build metadata from the published version listing, so
-the manifest field is the durable carrier. Example:
-`@runtyped/typescript@2.0.0+typescript.7.1` is the first release of format
-era 2, built on the `7.1` line of upstream [typescript], including
-in-development snapshots of upstream `main` at packaging time (upstream's
-most recent published release may lag behind).
-
-`@runtyped/typescript` declares a `peerDependencies` requirement on
-[@runtyped/type] covering its era, so the package manager itself refuses
-mismatched combinations.
+emits rather than to upstream TypeScript. The version of the upstream compiler
+it builds upon is tracked in the `runtyped.typescript` field of `package.json`.
 
 For the full scheme, see the [Runtyped versioning strategy].
 
@@ -120,6 +102,7 @@ APACHE-2.0, just like the official [typescript] package.
 [Go]: https://go.dev/
 [@marcj]: https://github.com/marcj
 [DeepKit]: https://github.com/deepkit/deepkit
+[Runtyped]: https://github.com/runtyped/runtyped
 [typescript]: https://www.npmjs.com/package/typescript
 [@runtyped/type]: https://www.npmjs.com/package/@runtyped/type
 [Relationship to DeepKit]: https://github.com/runtyped/runtyped#relationship-to-deepkit

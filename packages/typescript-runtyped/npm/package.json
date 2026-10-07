@@ -1,7 +1,6 @@
 {
   "name": "@runtyped/typescript",
-  "version": "2.0.0+typescript.7.1",
-  "typescriptBase": "7.1",
+  "version": "2.0.0",
   "description": "The runtyped TypeScript compiler: tsc with always-on runtime type reflection. Native Go binary (fork of microsoft/TypeScript's native compiler); compiling with this tsc is the opt-in.",
   "license": "Apache-2.0",
   "bin": {
@@ -36,5 +35,12 @@
   ],
   "peerDependencies": {
     "@runtyped/type": "^2.0.0"
+  },
+  "runtyped": {
+    "typescript": "7.1"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
   }
 }

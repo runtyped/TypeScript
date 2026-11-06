@@ -1,7 +1,7 @@
 package runtyped
 
 import (
-	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
@@ -19,7 +19,8 @@ type resolveDeclarationResult struct {
 // typeCompiler holds the state needed during type compilation for one source file.
 // It is the Go equivalent of the TypeScript CompilerProgram + extractPackStructOfType logic.
 type typeCompiler struct {
-	factory *printer.NodeFactory
+	emitContext  *printer.EmitContext
+	factory      *printer.NodeFactory
 	emitResolver printer.EmitResolver
 	sourceFiles  func() []*ast.SourceFile
 
@@ -51,13 +52,13 @@ type typeCompiler struct {
 }
 
 type compileDeclEntry struct {
-	name      string
+	name       string
 	sourceFile *ast.SourceFile
-	compiled  []*ast.Node
+	compiled   []*ast.Node
 }
 
 type embedDeclEntry struct {
-	name      string
+	name       string
 	sourceFile *ast.SourceFile
 }
 
@@ -76,15 +77,16 @@ type reExportSymbol struct {
 	exportedName string
 }
 
-func newTypeCompiler(factory *printer.NodeFactory, emitResolver printer.EmitResolver, sourceFiles func() []*ast.SourceFile) *typeCompiler {
+func newTypeCompiler(emitContext *printer.EmitContext, emitResolver printer.EmitResolver, sourceFiles func() []*ast.SourceFile) *typeCompiler {
 	return &typeCompiler{
-		factory:                factory,
-		emitResolver:           emitResolver,
-		sourceFiles:            sourceFiles,
-		compileDeclarations:    make(map[*ast.Node]*compileDeclEntry),
+		emitContext:             emitContext,
+		factory:                 emitContext.Factory,
+		emitResolver:            emitResolver,
+		sourceFiles:             sourceFiles,
+		compileDeclarations:     make(map[*ast.Node]*compileDeclEntry),
 		compileDeclarationOrder: nil,
-		embedDeclarations:      make(map[*ast.Node]*embedDeclEntry),
-		compiledDeclarations:   make(map[*ast.Node]bool),
+		embedDeclarations:       make(map[*ast.Node]*embedDeclEntry),
+		compiledDeclarations:    make(map[*ast.Node]bool),
 	}
 }
 
@@ -918,11 +920,12 @@ func (tc *typeCompiler) extractTypeOperator(node *ast.Node, program *compilerPro
 
 // extractIntrinsicKeyword handles intrinsic keyword types (Capitalize, Uppercase, etc.)
 func (tc *typeCompiler) extractIntrinsicKeyword(node *ast.Node, program *compilerProgram) {
-	if node.Parent == nil || node.Parent.Kind != ast.KindTypeAliasDeclaration {
+	parentNode := tc.parent(node)
+	if parentNode == nil || parentNode.Kind != ast.KindTypeAliasDeclaration {
 		program.pushOp(OpNever)
 		return
 	}
-	parent := node.Parent.AsTypeAliasDeclaration()
+	parent := parentNode.AsTypeAliasDeclaration()
 	if parent.TypeParameters == nil || len(parent.TypeParameters.Nodes) == 0 {
 		program.pushOp(OpNever)
 		return
@@ -1132,7 +1135,7 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 		program.pushOp(OpAny)
 		return
 	}
-	declSourceFile := findSourceFile(declaration)
+	declSourceFile := ast.GetSourceFileOfNode(declaration)
 
 	isFromImport := resolved.importDeclaration != nil
 	isGlobal := resolved.isGlobal || declSourceFile == nil || (resolved.importDeclaration == nil && (declSourceFile == nil || declSourceFile.FileName() != tc.sourceFile.FileName()))
@@ -1208,7 +1211,7 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 		if !tc.compiledDeclarations[declaration] && tc.compileDeclarations[declaration] == nil {
 			if isGlobal {
 				tc.embedDeclarations[declaration] = &embedDeclEntry{
-					name: name,
+					name:       name,
 					sourceFile: declSourceFile,
 				}
 			} else if isFromImport {
@@ -1217,7 +1220,7 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 					return
 				}
 				// For .d.ts files, check if __Ω{name} is explicitly exported
-				if declSourceFile != nil && isDtsFile(declSourceFile.FileName()) {
+				if declSourceFile != nil && isDtsFile(declSourceFile.FileName().AsString()) {
 					// Look for __Ω{name} in the .d.ts file's locals
 					// runtimeTypeName is already __Ω{name}, so use it directly
 					omegaName := getIdentifierName(runtimeTypeName)
@@ -1251,7 +1254,7 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 					return
 				}
 				tc.compileDeclarations[declaration] = &compileDeclEntry{
-					name: name,
+					name:       name,
 					sourceFile: declSourceFile,
 				}
 			}
@@ -1284,7 +1287,7 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 
 		// For .d.ts or same-file, check reflection
 		var reflection bool
-		if declSourceFile != nil && isDtsFile(declSourceFile.FileName()) {
+		if declSourceFile != nil && isDtsFile(declSourceFile.FileName().AsString()) {
 			reflection = true // conservative
 		} else {
 			reflection = true // default to true for same-file
@@ -1394,15 +1397,13 @@ func (tc *typeCompiler) resolveDeclaration(typeName *ast.Node) *resolveDeclarati
 	var declaration *ast.Node
 
 	// Walk up the parent chain looking in locals
-	current := typeName.Parent
+	current := tc.parent(typeName)
 	for current != nil {
-		var locals ast.SymbolTable
-		if current.LocalsContainerData() != nil {
-			locals = ast.GetLocals(current)
-		}
-		if locals != nil {
-			if sym, ok := locals[name]; ok && sym != nil && len(sym.Declarations) > 0 {
-				decl := sym.Declarations[0]
+		// Use the read-only Locals accessor: ast.GetLocals lazily creates the table,
+		// which races with other files being emitted concurrently.
+		if locals := current.Locals(); locals != nil {
+			if sym, ok := locals.Lookup(name); ok && sym != nil && len(sym.Declarations()) > 0 {
+				decl := sym.Declarations()[0]
 				// Skip parameters — they can't be referenced from outside
 				if decl.Kind != ast.KindParameter {
 					declaration = decl
@@ -1413,7 +1414,7 @@ func (tc *typeCompiler) resolveDeclaration(typeName *ast.Node) *resolveDeclarati
 		if current.Kind == ast.KindSourceFile {
 			break
 		}
-		current = current.Parent
+		current = tc.parent(current)
 	}
 
 	if declaration == nil {
@@ -1440,26 +1441,28 @@ func (tc *typeCompiler) resolveDeclaration(typeName *ast.Node) *resolveDeclarati
 			typeOnly = true
 		}
 		// parent.parent.parent should be ImportDeclaration
-		importDeclaration = findImportDeclaration(declaration)
+		importDeclaration = tc.findImportDeclaration(declaration)
 	} else if declaration.Kind == ast.KindImportDeclaration {
 		importDeclaration = declaration
 	} else if declaration.Kind == ast.KindImportClause {
-		importDeclaration = declaration.Parent
+		importDeclaration = tc.parent(declaration)
 	}
 
 	if importDeclaration != nil {
 		// Try to resolve the import to the actual declaration in another file
 		resolvedDecl := tc.resolveImportSpecifier(name, importDeclaration)
 		return &resolveDeclarationResult{
-			declaration:      resolvedDecl,
+			declaration:       resolvedDecl,
 			importDeclaration: importDeclaration,
-			typeOnly:         typeOnly,
+			typeOnly:          typeOnly,
 		}
 	}
 
 	// Handle type parameter pointing to type alias
-	if declaration.Kind == ast.KindTypeParameter && declaration.Parent != nil && declaration.Parent.Kind == ast.KindTypeAliasDeclaration {
-		declaration = declaration.Parent
+	if declaration.Kind == ast.KindTypeParameter {
+		if parent := tc.parent(declaration); parent != nil && parent.Kind == ast.KindTypeAliasDeclaration {
+			declaration = parent
+		}
 	}
 
 	if declaration == nil {
@@ -1467,20 +1470,23 @@ func (tc *typeCompiler) resolveDeclaration(typeName *ast.Node) *resolveDeclarati
 	}
 
 	return &resolveDeclarationResult{
-		declaration:      declaration,
+		declaration:       declaration,
 		importDeclaration: nil,
-		typeOnly:         typeOnly,
+		typeOnly:          typeOnly,
 	}
 }
 
+// parent returns node's parent in the parse tree; see parseTreeParent.
+func (tc *typeCompiler) parent(node *ast.Node) *ast.Node {
+	return parseTreeParent(tc.emitContext, node)
+}
+
 // findImportDeclaration walks up from an ImportSpecifier to find the ImportDeclaration.
-func findImportDeclaration(node *ast.Node) *ast.Node {
-	current := node.Parent
-	for current != nil {
+func (tc *typeCompiler) findImportDeclaration(node *ast.Node) *ast.Node {
+	for current := tc.parent(node); current != nil; current = tc.parent(current) {
 		if current.Kind == ast.KindImportDeclaration {
 			return current
 		}
-		current = current.Parent
 	}
 	return nil
 }
@@ -1544,7 +1550,7 @@ func (tc *typeCompiler) packOpsAndStack(program *compilerProgram, emitAnyForEmpt
 // as-is; literal-like nodes are re-created fresh from their semantic text;
 // everything else is deep-cloned with synthetic locations.
 func (tc *typeCompiler) convertStackNodeToExpression(node *ast.Node) *ast.Node {
-	if ast.PositionIsSynthesized(node.Pos()) && ast.PositionIsSynthesized(node.End()) && node.Parent == nil {
+	if ast.PositionIsSynthesized(node.Pos()) && ast.PositionIsSynthesized(node.End()) && node.Parent == nil { //nolint:customlint // Mirrors upstream's synthesized-node check; Parent is only tested, not traversed.
 		return node
 	}
 	switch node.Kind {
@@ -1749,7 +1755,7 @@ func (tc *typeCompiler) findSourceFileByModuleName(importOrExport *ast.Node) *as
 	specText := moduleSpecifier.AsStringLiteral().Text
 
 	// The import is relative to the current source file's directory
-	importingDir := tc.sourceFile.FileName()
+	importingDir := tc.sourceFile.FileName().AsString()
 	// Get directory of the importing file
 	lastSlash := -1
 	for i := len(importingDir) - 1; i >= 0; i-- {
@@ -1790,11 +1796,8 @@ func (tc *typeCompiler) findSourceFileByModuleName(importOrExport *ast.Node) *as
 
 	allFiles := tc.sourceFiles()
 	for _, sf := range allFiles {
-		fileName := sf.FileName()
-		for _, candidate := range candidates {
-			if fileName == candidate {
-				return sf
-			}
+		if slices.Contains(candidates, sf.FileName().AsString()) {
+			return sf
 		}
 	}
 
@@ -1803,18 +1806,19 @@ func (tc *typeCompiler) findSourceFileByModuleName(importOrExport *ast.Node) *as
 
 // findDeclarationInFile looks up a name in a source file's locals (binder symbol table).
 func (tc *typeCompiler) findDeclarationInFile(sourceFile *ast.SourceFile, declarationName string) *ast.Node {
-	if sourceFile == nil || sourceFile.AsNode().LocalsContainerData() == nil {
+	if sourceFile == nil {
 		return nil
 	}
-	locals := ast.GetLocals(sourceFile.AsNode())
+	// Read-only access: this may be another file that is being emitted concurrently.
+	locals := sourceFile.AsNode().Locals()
 	if locals == nil {
 		return nil
 	}
-	sym, ok := locals[declarationName]
-	if !ok || sym == nil || len(sym.Declarations) == 0 {
+	sym, ok := locals.Lookup(declarationName)
+	if !ok || sym == nil || len(sym.Declarations()) == 0 {
 		return nil
 	}
-	return sym.Declarations[0]
+	return sym.Declarations()[0]
 }
 
 // followExport follows an export declaration to find the actual declaration,
@@ -1827,7 +1831,7 @@ func (tc *typeCompiler) followExport(declarationName string, exportDecl *ast.Nod
 			if namedExports.Elements != nil {
 				for _, element := range namedExports.Elements.Nodes {
 					spec := element.AsExportSpecifier()
-					exportedName := spec.Name().AsIdentifier().Text
+					exportedName := getIdentifierName(spec.Name())
 					if exportedName != declarationName {
 						continue
 					}
@@ -1837,28 +1841,24 @@ func (tc *typeCompiler) followExport(declarationName string, exportDecl *ast.Nod
 						// Look in source file locals
 						localName := exportedName
 						if spec.PropertyName != nil {
-							localName = spec.PropertyName.AsIdentifier().Text
+							localName = getIdentifierName(spec.PropertyName)
 						}
-						if sourceFile.AsNode().LocalsContainerData() != nil {
-							locals := ast.GetLocals(sourceFile.AsNode())
-							if locals != nil {
-								if sym, ok := locals[localName]; ok && sym != nil && len(sym.Declarations) > 0 {
-									found := sym.Declarations[0]
-									if found.Kind != ast.KindImportSpecifier {
-										return found
-									}
-									// It's an import — resolve cross-file
-									impDecl := findImportDeclaration(found)
-									return tc.resolveImportSpecifier(localName, impDecl)
-								}
+						// Read-only access: this may be another file that is being emitted concurrently.
+						if sym, ok := sourceFile.AsNode().Locals().Lookup(localName); ok && sym != nil && len(sym.Declarations()) > 0 {
+							found := sym.Declarations()[0]
+							if found.Kind != ast.KindImportSpecifier {
+								return found
 							}
+							// It's an import — resolve cross-file
+							impDecl := tc.findImportDeclaration(found)
+							return tc.resolveImportSpecifier(localName, impDecl)
 						}
 						return nil
 					}
 					// It's `export { x } from 'module'` — recurse
 					originalName := exportedName
 					if spec.PropertyName != nil {
-						originalName = spec.PropertyName.AsIdentifier().Text
+						originalName = getIdentifierName(spec.PropertyName)
 					}
 					return tc.resolveImportSpecifier(originalName, exportDecl)
 				}
@@ -1998,12 +1998,12 @@ func (tc *typeCompiler) resolveValueDeclaration(identifier *ast.Node) *ast.Node 
 	name := identifier.AsIdentifier().Text
 
 	// Walk up the parent chain looking for the symbol in locals
-	current := identifier.Parent
+	current := tc.parent(identifier)
 	for current != nil {
 		if current.Locals() != nil {
-			sym := current.Locals()[name]
-			if sym != nil && len(sym.Declarations) > 0 {
-				decl := sym.Declarations[0]
+			sym := current.Locals().Get(name)
+			if sym != nil && len(sym.Declarations()) > 0 {
+				decl := sym.Declarations()[0]
 				if decl.Kind != ast.KindParameter {
 					// Follow imports
 					return tc.followImportToDeclaration(name, decl)
@@ -2013,7 +2013,7 @@ func (tc *typeCompiler) resolveValueDeclaration(identifier *ast.Node) *ast.Node 
 		if current.Kind == ast.KindSourceFile {
 			break
 		}
-		current = current.Parent
+		current = tc.parent(current)
 	}
 	return nil
 }
@@ -2023,10 +2023,9 @@ func (tc *typeCompiler) followImportToDeclaration(name string, decl *ast.Node) *
 	switch decl.Kind {
 	case ast.KindImportSpecifier:
 		// ImportSpecifier → NamedImports → ImportClause → ImportDeclaration
-		importDecl := decl.Parent.Parent.Parent
-		return tc.resolveImportSpecifier(name, importDecl)
+		return tc.resolveImportSpecifier(name, tc.findImportDeclaration(decl))
 	case ast.KindImportClause:
-		return tc.resolveImportSpecifier(name, decl.Parent)
+		return tc.resolveImportSpecifier(name, tc.parent(decl))
 	case ast.KindImportDeclaration:
 		return tc.resolveImportSpecifier(name, decl)
 	default:
@@ -2154,7 +2153,7 @@ func (tc *typeCompiler) resolveCallReceiveTypeInfo(node *ast.Node) *CallReceiveT
 				return nil
 			}
 			// Walk up to find enclosing class
-			parent := node.Parent
+			parent := tc.parent(node)
 			for parent != nil {
 				if parent.Kind == ast.KindClassDeclaration || parent.Kind == ast.KindClassExpression {
 					classMembers := parent.ClassLikeData().Members
@@ -2179,7 +2178,7 @@ func (tc *typeCompiler) resolveCallReceiveTypeInfo(node *ast.Node) *CallReceiveT
 					}
 					return nil
 				}
-				parent = parent.Parent
+				parent = tc.parent(parent)
 			}
 			return nil
 		}
@@ -2295,8 +2294,7 @@ func findConstructor(members []*ast.Node) *ast.Node {
 // buildDirectPassingArgs places type expressions at their ReceiveType parameter positions.
 // Returns nil if we can't place (user already provided args at ReceiveType positions).
 func (tc *typeCompiler) buildDirectPassingArgs(existingArgs []*ast.Node, typeExpressions []*ast.Node, info *ReceiveTypeInfo) []*ast.Node {
-	args := make([]*ast.Node, len(existingArgs))
-	copy(args, existingArgs)
+	args := slices.Clone(existingArgs)
 
 	for typeArgIdx, paramIdx := range info.TypeArgToParamIndex {
 		if typeArgIdx >= len(typeExpressions) {
@@ -2348,9 +2346,7 @@ func (tc *typeCompiler) resolveGlobalDeclaration(name string) *ast.Node {
 	}
 	for _, sf := range tc.sourceFiles() {
 		// Check if this is a lib file (default library)
-		fileName := sf.FileName()
-		base := filepath.Base(fileName)
-		if !strings.HasPrefix(base, "lib.") {
+		if !strings.HasPrefix(sf.FileName().BaseName(), "lib.") {
 			continue
 		}
 		// Check globals (locals at the source file level)
@@ -2358,9 +2354,9 @@ func (tc *typeCompiler) resolveGlobalDeclaration(name string) *ast.Node {
 		if locals == nil {
 			continue
 		}
-		sym := locals[name]
-		if sym != nil && len(sym.Declarations) > 0 {
-			return sym.Declarations[0]
+		sym := locals.Get(name)
+		if sym != nil && len(sym.Declarations()) > 0 {
+			return sym.Declarations()[0]
 		}
 	}
 	return nil

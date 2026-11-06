@@ -27,12 +27,13 @@ func transformInline(t *testing.T, l *loader.Loader, code, fileName string) stri
 // runNode runs JS with node and returns trimmed stdout.
 func runNode(t *testing.T, js string) string {
 	t.Helper()
-	tmpFile, err := os.CreateTemp("", "loader-test-*.js")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "loader-test-*.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString(js)
+	if _, err := tmpFile.WriteString(js); err != nil {
+		t.Fatal(err)
+	}
 	tmpFile.Close()
 	cmd := exec.Command("node", tmpFile.Name())
 	cmd.Env = append(os.Environ(), "NODE_PATH=/app/node_modules")
@@ -483,10 +484,12 @@ function processCombined(value: Combined): void {}`, "union-intersection.ts")
 }
 
 func TestLoader_ConditionalTypes(t *testing.T) {
+	t.Parallel()
 	t.Skip("Conditional types in type aliases not yet supported in Go type walker")
 }
 
 func TestLoader_MappedTypes(t *testing.T) {
+	t.Parallel()
 	t.Skip("Mapped types (Readonly<>, Partial<>) in type aliases need global lib resolution in loader context")
 }
 

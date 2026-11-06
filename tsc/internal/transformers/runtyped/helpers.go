@@ -2,7 +2,19 @@ package runtyped
 
 import (
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
+	"github.com/microsoft/TypeScript/tsc/internal/printer"
 )
+
+// parseTreeParent returns the parent of node's original parse-tree node, or nil
+// if node has no parse-tree origin. Nodes produced by the visitor or factory
+// don't carry a Parent, so every upward walk must go through the parse tree.
+// Binder declarations are parse-tree nodes and map to themselves.
+func parseTreeParent(emitContext *printer.EmitContext, node *ast.Node) *ast.Node {
+	if original := emitContext.ParseNode(node); original != nil {
+		return original.Parent //nolint:customlint // ParseNode yields parse-tree nodes, whose parents are set by the parser.
+	}
+	return nil
+}
 
 // knownClasses maps built-in class names to their ReflectionOp.
 var knownClasses = map[string]int{
@@ -27,16 +39,16 @@ var knownClasses = map[string]int{
 
 // typeNameBrands maps type number brand names to their values.
 var typeNameBrands = map[string]int{
-	"integer":  TypeNumberBrandInteger,
-	"int8":      TypeNumberBrandInt8,
-	"int16":     TypeNumberBrandInt16,
-	"int32":     TypeNumberBrandInt32,
-	"uint8":     TypeNumberBrandUint8,
-	"uint16":    TypeNumberBrandUint16,
-	"uint32":    TypeNumberBrandUint32,
-	"float":     TypeNumberBrandFloat,
-	"float32":   TypeNumberBrandFloat32,
-	"float64":   TypeNumberBrandFloat64,
+	"integer": TypeNumberBrandInteger,
+	"int8":    TypeNumberBrandInt8,
+	"int16":   TypeNumberBrandInt16,
+	"int32":   TypeNumberBrandInt32,
+	"uint8":   TypeNumberBrandUint8,
+	"uint16":  TypeNumberBrandUint16,
+	"uint32":  TypeNumberBrandUint32,
+	"float":   TypeNumberBrandFloat,
+	"float32": TypeNumberBrandFloat32,
+	"float64": TypeNumberBrandFloat64,
 }
 
 // intrinsicMapping maps intrinsic type names to TypeIntrinsic values.
@@ -159,24 +171,6 @@ func kindToModifierFlag(kind ast.Kind) ast.ModifierFlags {
 	default:
 		return 0
 	}
-}
-
-// findSourceFile walks up parent pointers to find the containing SourceFile.
-func findSourceFile(node *ast.Node) *ast.SourceFile {
-	if node == nil {
-		return nil
-	}
-	if node.Kind == ast.KindSourceFile {
-		return node.AsSourceFile()
-	}
-	current := node.Parent
-	for current != nil {
-		if current.Kind == ast.KindSourceFile {
-			return current.AsSourceFile()
-		}
-		current = current.Parent
-	}
-	return nil
 }
 
 // getEffectiveConstraintOfTypeParameter returns the constraint of a type parameter, if any.

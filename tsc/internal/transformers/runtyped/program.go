@@ -1,6 +1,8 @@
 package runtyped
 
 import (
+	"slices"
+
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
 )
 
@@ -9,10 +11,10 @@ import (
 // At emit time, these get serialized into a JavaScript array literal.
 type stackEntry struct {
 	kind stackEntryKind
-	node *ast.Node   // for kindStackNode
-	str  string      // for kindStackString
-	num  float64     // for kindStackNumber
-	bval bool        // for kindStackBool
+	node *ast.Node // for kindStackNode
+	str  string    // for kindStackString
+	num  float64   // for kindStackNumber
+	bval bool      // for kindStackBool
 }
 
 type stackEntryKind int
@@ -44,9 +46,13 @@ func (s stackEntry) equals(other stackEntry) bool {
 // frame represents a scope frame for variable tracking.
 type frame struct {
 	variables []frameVariable
-	opIndex   int
+	// opIndex is the position right after the frame's start within its op list.
+	opIndex int
+	// coRoutine is the co-routine whose op list the frame belongs to, or nil if
+	// it belongs to the main op list. opIndex is only meaningful within that list.
+	coRoutine   *coRoutine
 	conditional bool
-	previous  *frame
+	previous    *frame
 }
 
 type frameVariable struct {
@@ -88,11 +94,11 @@ type coRoutine struct {
 
 // compilerProgram accumulates opcodes and stack entries for a single type.
 type compilerProgram struct {
-	ops          []int
-	stack        []stackEntry
-	mainOffset   int
+	ops           []int
+	stack         []stackEntry
+	mainOffset    int
 	stackPosition int
-	currentFrame *frame
+	currentFrame  *frame
 
 	activeCoRoutines []*coRoutine
 	coRoutines       []*coRoutine
@@ -105,9 +111,9 @@ type compilerProgram struct {
 
 func newCompilerProgram(forNode *ast.Node, sourceFile *ast.SourceFile) *compilerProgram {
 	return &compilerProgram{
-		forNode:    forNode,
-		sourceFile: sourceFile,
-		currentFrame: &frame{},
+		forNode:               forNode,
+		sourceFile:            sourceFile,
+		currentFrame:          &frame{},
 		resolveFunctionParams: make(map[*ast.Node]int),
 	}
 }
@@ -117,21 +123,16 @@ func (p *compilerProgram) isEmpty() bool {
 }
 
 func (p *compilerProgram) buildPackStruct() ([]int, []stackEntry) {
-	result := make([]int, len(p.ops))
-	copy(result, p.ops)
-
-	if len(p.coRoutines) > 0 {
-		// Prepend co-routines in reverse order
-		for i := len(p.coRoutines) - 1; i >= 0; i-- {
-			result = append(p.coRoutines[i].ops, result...)
-		}
-	}
-
+	// Layout: [OpJump mainOffset] coRoutine0 coRoutine1 ... main
+	parts := make([][]int, 0, len(p.coRoutines)+2)
 	if p.mainOffset > 0 {
-		result = append([]int{OpJump, p.mainOffset}, result...)
+		parts = append(parts, []int{OpJump, p.mainOffset})
 	}
-
-	return result, p.stack
+	for _, cr := range p.coRoutines {
+		parts = append(parts, cr.ops)
+	}
+	parts = append(parts, p.ops)
+	return slices.Concat(parts...), p.stack
 }
 
 func (p *compilerProgram) pushConditionalFrame() {
@@ -163,8 +164,10 @@ func (p *compilerProgram) pushStackBool(b bool) int {
 }
 
 func (p *compilerProgram) pushCoRoutine() {
-	p.pushFrame(true)
+	// Activate the co-routine before creating its frame so that the frame is
+	// anchored to the co-routine's own op list.
 	p.activeCoRoutines = append(p.activeCoRoutines, &coRoutine{})
+	p.pushFrame(true)
 }
 
 func (p *compilerProgram) popCoRoutine() int {
@@ -189,13 +192,21 @@ func (p *compilerProgram) pushOp(opCodes ...int) {
 	p.ops = append(p.ops, opCodes...)
 }
 
+// pushOpAtFrame inserts opCodes at the start of frame f. The frame may belong to
+// an enclosing op list rather than the active one, e.g. when an `infer` inside a
+// mapped type declares its variable on the surrounding conditional frame.
 func (p *compilerProgram) pushOpAtFrame(f *frame, opCodes ...int) {
-	if len(p.activeCoRoutines) > 0 {
-		cr := p.activeCoRoutines[len(p.activeCoRoutines)-1]
-		cr.ops = append(cr.ops[:f.opIndex], append(opCodes, cr.ops[f.opIndex:]...)...)
+	if f.coRoutine != nil {
+		f.coRoutine.ops = insertOps(f.coRoutine.ops, f.opIndex, opCodes)
 		return
 	}
-	p.ops = append(p.ops[:f.opIndex], append(opCodes, p.ops[f.opIndex:]...)...)
+	p.ops = insertOps(p.ops, f.opIndex, opCodes)
+}
+
+// insertOps inserts opCodes at index, clamping index to len(ops) like the JS
+// Array.prototype.splice used by the original implementation.
+func insertOps(ops []int, index int, opCodes []int) []int {
+	return slices.Insert(ops, min(index, len(ops)), opCodes...)
 }
 
 func (p *compilerProgram) findOrAddStackEntry(entry stackEntry) int {
@@ -227,13 +238,13 @@ func (p *compilerProgram) pushFrame(implicit bool) *frame {
 	if !implicit {
 		p.pushOp(OpFrame)
 	}
-	var opIndex int
+	var owner *coRoutine
+	opIndex := len(p.ops)
 	if len(p.activeCoRoutines) > 0 {
-		opIndex = len(p.activeCoRoutines[len(p.activeCoRoutines)-1].ops)
-	} else {
-		opIndex = len(p.ops)
+		owner = p.activeCoRoutines[len(p.activeCoRoutines)-1]
+		opIndex = len(owner.ops)
 	}
-	p.currentFrame = &frame{previous: p.currentFrame, opIndex: opIndex}
+	p.currentFrame = &frame{previous: p.currentFrame, opIndex: opIndex, coRoutine: owner}
 	return p.currentFrame
 }
 

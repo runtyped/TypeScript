@@ -4,11 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/microsoft/TypeScript/tsc/internal/core"
 	"github.com/microsoft/TypeScript/tsc/internal/testutil/harnessutil"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
 
 // compileSingleFileTS compiles a single TS file and returns the emitted JS.
@@ -21,10 +23,10 @@ func compileHoistFile(t *testing.T, content string) string {
 func compileHoistFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	var inputFiles []*harnessutil.TestFile
-	var fileNames []string
+	var fileNames []tspath.RootedFilePath
 	for name, content := range files {
 		inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-		fileNames = append(fileNames, "/"+name)
+		fileNames = append(fileNames, tspath.RootedFilePathFromNormalized("/"+name))
 	}
 	result := harnessutil.CompileFiles(t,
 		inputFiles,
@@ -50,21 +52,35 @@ func compileHoistFiles(t *testing.T, files map[string]string) string {
 	return appJS.Content
 }
 
-// runNodeJS runs the given JS with node and returns trimmed stdout.
+// runtypedNodeEnv makes @runtyped/type resolvable from temp files when running
+// inside the packaging Docker image.
+var runtypedNodeEnv = append(os.Environ(), "NODE_PATH=/app/node_modules")
+
+// runtypedTypeAvailable reports whether node can resolve @runtyped/type, which
+// the runtime tests below require.
+var runtypedTypeAvailable = sync.OnceValue(func() bool {
+	cmd := exec.Command("node", "-e", "require.resolve('@runtyped/type')")
+	cmd.Env = runtypedNodeEnv
+	return cmd.Run() == nil
+})
+
+// runNodeJS runs the given JS with node and returns trimmed stdout. It skips the
+// test when node or @runtyped/type is unavailable (outside the Docker image).
 func runNodeJS(t *testing.T, js string) string {
 	t.Helper()
-	tmpFile, err := os.CreateTemp("", "runtyped-hoist-*.js")
+	if !runtypedTypeAvailable() {
+		t.Skip("node with @runtyped/type is not available (expected at /app/node_modules)")
+	}
+	tmpFile, err := os.CreateTemp(t.TempDir(), "runtyped-hoist-*.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmpFile.Name())
 	if _, err := tmpFile.WriteString(js); err != nil {
 		t.Fatal(err)
 	}
 	tmpFile.Close()
 	cmd := exec.Command("node", tmpFile.Name())
-	// Ensure @runtyped/type is resolvable from the temp file location
-	cmd.Env = append(os.Environ(), "NODE_PATH=/app/node_modules")
+	cmd.Env = runtypedNodeEnv
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

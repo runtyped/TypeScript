@@ -34,26 +34,26 @@ func TestBinderLocalsAccess(t *testing.T) {
 	}
 
 	// Check that we can find "Foo" and "Bar" in the symbol table
-	fooSymbol, hasFoo := file.Locals["Foo"]
+	fooSymbol, hasFoo := file.Locals.Lookup("Foo")
 	if !hasFoo {
 		t.Fatal("expected to find 'Foo' in sourceFile.Locals")
 	}
-	if len(fooSymbol.Declarations) == 0 {
+	if len(fooSymbol.Declarations()) == 0 {
 		t.Fatal("expected 'Foo' symbol to have declarations")
 	}
-	declKind := fooSymbol.Declarations[0].Kind
+	declKind := fooSymbol.Declarations()[0].Kind
 	if declKind != ast.KindTypeAliasDeclaration {
 		t.Fatalf("expected 'Foo' declaration to be TypeAliasDeclaration, got %v", declKind)
 	}
 
-	barSymbol, hasBar := file.Locals["Bar"]
+	barSymbol, hasBar := file.Locals.Lookup("Bar")
 	if !hasBar {
 		t.Fatal("expected to find 'Bar' in sourceFile.Locals")
 	}
-	if len(barSymbol.Declarations) == 0 {
+	if len(barSymbol.Declarations()) == 0 {
 		t.Fatal("expected 'Bar' symbol to have declarations")
 	}
-	declKind = barSymbol.Declarations[0].Kind
+	declKind = barSymbol.Declarations()[0].Kind
 	if declKind != ast.KindClassDeclaration {
 		t.Fatalf("expected 'Bar' declaration to be ClassDeclaration, got %v", declKind)
 	}
@@ -75,22 +75,22 @@ func TestBinderLocalsWithImports(t *testing.T) {
 	}
 
 	// The binder should have created a symbol for the imported name "User"
-	userSymbol, hasUser := file.Locals["User"]
+	userSymbol, hasUser := file.Locals.Lookup("User")
 	if !hasUser {
 		// In module mode the import might be in the module symbol's exports
-		if file.Symbol != nil && file.Symbol.Exports != nil {
-			userSymbol, hasUser = file.Symbol.Exports["User"]
+		if file.Symbol != nil && file.Symbol.Exports() != nil {
+			userSymbol, hasUser = file.Symbol.Exports().Lookup("User")
 		}
 		if !hasUser {
 			t.Skip("binder did not create a local symbol for 'User' — import may be resolved via module exports instead")
 		}
 	}
 
-	if len(userSymbol.Declarations) == 0 {
+	if len(userSymbol.Declarations()) == 0 {
 		t.Fatal("expected 'User' symbol to have declarations")
 	}
 
-	decl := userSymbol.Declarations[0]
+	decl := userSymbol.Declarations()[0]
 	t.Logf("Resolved import 'User' → declaration kind: %v", decl.Kind)
 }
 
@@ -104,19 +104,19 @@ func TestBinderLocalsWithExportedType(t *testing.T) {
 	binder.BindSourceFile(file)
 
 	// Exported declarations should appear in both locals and module exports
-	statusSymbol, hasStatus := file.Locals["Status"]
-	if !hasStatus && file.Symbol != nil && file.Symbol.Exports != nil {
-		statusSymbol, hasStatus = file.Symbol.Exports["Status"]
+	statusSymbol, hasStatus := file.Locals.Lookup("Status")
+	if !hasStatus && file.Symbol != nil && file.Symbol.Exports() != nil {
+		statusSymbol, hasStatus = file.Symbol.Exports().Lookup("Status")
 	}
 	if !hasStatus {
 		t.Fatal("expected to find 'Status' in locals or module exports")
 	}
 
-	if len(statusSymbol.Declarations) == 0 {
+	if len(statusSymbol.Declarations()) == 0 {
 		t.Fatal("expected 'Status' symbol to have declarations")
 	}
 
-	declKind := statusSymbol.Declarations[0].Kind
+	declKind := statusSymbol.Declarations()[0].Kind
 	if declKind != ast.KindTypeAliasDeclaration {
 		t.Fatalf("expected 'Status' to be TypeAliasDeclaration, got %v", declKind)
 	}
@@ -141,11 +141,11 @@ func TestBinderLocalsInClassScope(t *testing.T) {
 	}
 
 	// The class declaration itself should be in the file's locals
-	fooSymbol, hasFoo := file.Locals["Foo"]
+	fooSymbol, hasFoo := file.Locals.Lookup("Foo")
 	if !hasFoo {
 		t.Fatal("expected to find 'Foo' in sourceFile.Locals")
 	}
-	if len(fooSymbol.Declarations) == 0 {
+	if len(fooSymbol.Declarations()) == 0 {
 		t.Fatal("expected 'Foo' symbol to have declarations")
 	}
 
@@ -153,20 +153,20 @@ func TestBinderLocalsInClassScope(t *testing.T) {
 	// (via declareClassMember), not in Locals. Locals on a class contains block-scoped
 	// declarations like constructor locals. This is important for the port: class member
 	// resolution goes through Symbol.Members, not Locals.
-	if fooSymbol.Members == nil {
+	if fooSymbol.Members() == nil {
 		t.Fatal("expected class symbol to have Members populated after binding")
 	}
 
-	tParamSymbol, hasT := fooSymbol.Members["T"]
+	tParamSymbol, hasT := fooSymbol.Members().Lookup("T")
 	if !hasT {
 		t.Fatal("expected to find type parameter 'T' in class locals")
 	}
 
-	if len(tParamSymbol.Declarations) == 0 {
+	if len(tParamSymbol.Declarations()) == 0 {
 		t.Fatal("expected 'T' symbol to have declarations")
 	}
 
-	declKind := tParamSymbol.Declarations[0].Kind
+	declKind := tParamSymbol.Declarations()[0].Kind
 	if declKind != ast.KindTypeParameter {
 		t.Fatalf("expected 'T' to be TypeParameter, got %v", declKind)
 	}

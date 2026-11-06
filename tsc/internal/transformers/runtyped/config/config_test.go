@@ -1,13 +1,16 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions/tsoptionstest"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
 
-func buildHost(files map[string]string) *tsoptionstest.VfsParseConfigHost {
+func buildHost(files map[string]string) tsoptions.ParseConfigHost {
 	// VFS requires rooted paths — prefix all with "/"
 	rooted := make(map[string]string, len(files))
 	for k, v := range files {
@@ -16,10 +19,11 @@ func buildHost(files map[string]string) *tsoptionstest.VfsParseConfigHost {
 		}
 		rooted[k] = v
 	}
-	return tsoptionstest.NewVFSParseConfigHost(rooted, "/", true)
+	return tsoptions.NewDefaultParseConfigHost(tsoptionstest.NewVFS(rooted, tspath.CaseSensitive))
 }
 
 func TestPatternMatch(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		path     string
 		patterns []string
@@ -46,6 +50,7 @@ func TestPatternMatch(t *testing.T) {
 }
 
 func TestEmptyConfig(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.json": `{}`,
 	})
@@ -81,6 +86,7 @@ func TestEmptyConfig(t *testing.T) {
 }
 
 func TestSimpleConfig(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.json": `{"reflection": true}`,
 	})
@@ -100,6 +106,7 @@ func TestSimpleConfig(t *testing.T) {
 }
 
 func TestSimpleConfigWithExclude(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": true, "exclude": ["test.ts"]}}`,
 	})
@@ -125,6 +132,7 @@ func TestSimpleConfigWithExclude(t *testing.T) {
 }
 
 func TestDisableParent(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base.json": `{"reflection": true}`,
 		"/tsconfig.json":      `{"extends": "./tsconfig.base.json", "reflection": false}`,
@@ -145,6 +153,7 @@ func TestDisableParent(t *testing.T) {
 }
 
 func TestReplaceStrategyDoesNotReplaceDefaultExcludes(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": true, "mergeStrategy": "replace", "exclude": ["test.ts"]}}`,
 	})
@@ -174,8 +183,9 @@ func TestReplaceStrategyDoesNotReplaceDefaultExcludes(t *testing.T) {
 }
 
 func TestReplaceParentConfigExclude(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
-		"/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": true, "exclude": ["test.ts"]}}`,
+		"/tsconfig.json":  `{"deepkitCompilerOptions": {"reflection": true, "exclude": ["test.ts"]}}`,
 		"/tsconfig2.json": `{"extends": "./tsconfig.json", "deepkitCompilerOptions": {"mergeStrategy": "replace", "exclude": ["test2.ts"]}}`,
 	})
 
@@ -205,6 +215,7 @@ func TestReplaceParentConfigExclude(t *testing.T) {
 }
 
 func TestExtendReflectionArray(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base.json": `{"deepkitCompilerOptions": {"reflection": ["test.ts"]}}`,
 		"/tsconfig.json":      `{"extends": "./tsconfig.base.json", "deepkitCompilerOptions": {"reflection": ["test2.ts"]}}`,
@@ -232,6 +243,7 @@ func TestExtendReflectionArray(t *testing.T) {
 }
 
 func TestReplaceReflectionArray(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base.json": `{"deepkitCompilerOptions": {"reflection": ["test.ts"]}}`,
 		"/tsconfig.json":      `{"extends": "./tsconfig.base.json", "deepkitCompilerOptions": {"mergeStrategy": "replace", "reflection": ["test2.ts"]}}`,
@@ -257,6 +269,7 @@ func TestReplaceReflectionArray(t *testing.T) {
 }
 
 func TestCircularExtend(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base.json": `{"extends": "./tsconfig.json", "deepkitCompilerOptions": {"reflection": ["test.ts"]}}`,
 		"/tsconfig.json":      `{"extends": "./tsconfig.base.json", "deepkitCompilerOptions": {"reflection": ["test2.ts"]}}`,
@@ -282,6 +295,7 @@ func TestCircularExtend(t *testing.T) {
 }
 
 func TestNegativeMatch1(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/app/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": ["model/**/*.ts"]}}`,
 	})
@@ -295,6 +309,7 @@ func TestNegativeMatch1(t *testing.T) {
 }
 
 func TestNegativeMatch2(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/path/portal/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": ["server/controllers/**/*.ts", "server/services/**/*.ts", "server/dao/**/*.ts", "!server/dao/mongoose.ts", "shared/**/*.ts"]}}`,
 	})
@@ -307,6 +322,7 @@ func TestNegativeMatch2(t *testing.T) {
 }
 
 func TestNegativeMatch3(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/path/portal/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": ["!src/lib/graphql/**/*.ts", "src/**/*.ts"]}}`,
 	})
@@ -319,6 +335,7 @@ func TestNegativeMatch3(t *testing.T) {
 }
 
 func TestNegativeMatch4(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/path/portal/tsconfig.json": `{"deepkitCompilerOptions": {"reflection": ["!src/lib/graphql/generated.ts", "src/**/*.ts"]}}`,
 	})
@@ -333,10 +350,11 @@ func TestNegativeMatch4(t *testing.T) {
 // === Extends array support (TypeScript 5.0+) ===
 
 func TestExtendsAsArrayWithMultipleConfigs(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base1.json": `{"deepkitCompilerOptions": {"reflection": ["src/models/**/*.ts"]}}`,
 		"/tsconfig.base2.json": `{"deepkitCompilerOptions": {"reflection": ["src/services/**/*.ts"]}}`,
-		"/tsconfig.json":      `{"extends": ["./tsconfig.base1.json", "./tsconfig.base2.json"], "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
+		"/tsconfig.json":       `{"extends": ["./tsconfig.base1.json", "./tsconfig.base2.json"], "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
 	})
 
 	cache := map[string]*ConfigResolver{}
@@ -359,11 +377,12 @@ func TestExtendsAsArrayWithMultipleConfigs(t *testing.T) {
 }
 
 func TestExtendsWithNestedExtends(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.grandparent.json": `{"deepkitCompilerOptions": {"reflection": ["src/core/**/*.ts"]}}`,
 		"/tsconfig.parent1.json":     `{"extends": "./tsconfig.grandparent.json", "deepkitCompilerOptions": {"reflection": ["src/models/**/*.ts"]}}`,
 		"/tsconfig.parent2.json":     `{"deepkitCompilerOptions": {"reflection": ["src/services/**/*.ts"]}}`,
-		"/tsconfig.json":            `{"extends": ["./tsconfig.parent1.json", "./tsconfig.parent2.json"], "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
+		"/tsconfig.json":             `{"extends": ["./tsconfig.parent1.json", "./tsconfig.parent2.json"], "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
 	})
 
 	cache := map[string]*ConfigResolver{}
@@ -386,10 +405,11 @@ func TestExtendsWithNestedExtends(t *testing.T) {
 }
 
 func TestCircularReferenceDetectionWithExtendsArray(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base1.json": `{"extends": ["./tsconfig.json"], "deepkitCompilerOptions": {"reflection": ["src/models/**/*.ts"]}}`,
 		"/tsconfig.base2.json": `{"extends": ["./tsconfig.base1.json"], "deepkitCompilerOptions": {"reflection": ["src/services/**/*.ts"]}}`,
-		"/tsconfig.json":      `{"extends": ["./tsconfig.base1.json", "./tsconfig.base2.json"], "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
+		"/tsconfig.json":       `{"extends": ["./tsconfig.base1.json", "./tsconfig.base2.json"], "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
 	})
 
 	cache := map[string]*ConfigResolver{}
@@ -404,6 +424,7 @@ func TestCircularReferenceDetectionWithExtendsArray(t *testing.T) {
 }
 
 func TestExtendsAsSingleStringBackwardCompat(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.base.json": `{"deepkitCompilerOptions": {"reflection": ["src/models/**/*.ts"]}}`,
 		"/tsconfig.json":      `{"extends": "./tsconfig.base.json", "deepkitCompilerOptions": {"reflection": ["src/controllers/**/*.ts"]}}`,
@@ -425,6 +446,7 @@ func TestExtendsAsSingleStringBackwardCompat(t *testing.T) {
 }
 
 func TestExtendsArrayWithEmptyArray(t *testing.T) {
+	t.Parallel()
 	host := buildHost(map[string]string{
 		"/tsconfig.json": `{"extends": [], "deepkitCompilerOptions": {"reflection": ["src/**/*.ts"]}}`,
 	})
@@ -454,10 +476,5 @@ func assertMode(t *testing.T, resolver *ConfigResolver, path string, expected Mo
 }
 
 func contains(arr []string, s string) bool {
-	for _, v := range arr {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(arr, s)
 }

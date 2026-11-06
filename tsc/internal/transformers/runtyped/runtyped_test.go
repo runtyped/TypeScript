@@ -18,13 +18,15 @@ import (
 //
 // The __type arrays contain real encoded type programs (opcodes + stack entries).
 // Opcodes are encoded as charCode(op + 33), e.g.:
-//   '!' = 0 (never), '"' = 1 (any), '&' = 5 (string), "'" = 6 (number),
-//   '0' = 17 (parameter), '3' = 20 (class), '5' = 22 (classReference),
-//   'P' = 48 (method), 'w' = 86 (typeName), 'y' = 88 (nominal)
+//
+//	'!' = 0 (never), '"' = 1 (any), '&' = 5 (string), "'" = 6 (number),
+//	'0' = 17 (parameter), '3' = 20 (class), '5' = 22 (classReference),
+//	'P' = 48 (method), 'w' = 86 (typeName), 'y' = 88 (nominal)
 //
 // NOTE: Stack indices > 0 produce characters that need JS escaping.
-//   Index 0 → '!' (33), Index 1 → '"' (34, escaped as \" in JS strings),
-//   Index 2 → '#' (35), etc.
+//
+//	Index 0 → '!' (33), Index 1 → '"' (34, escaped as \" in JS strings),
+//	Index 2 → '#' (35), etc.
 func TestReflectionTransformer(t *testing.T) {
 	t.Parallel()
 	data := []struct {
@@ -42,8 +44,8 @@ func TestReflectionTransformer(t *testing.T) {
 }`,
 		},
 		{
-			title:  "EmptyClass",
-			input:  "class Empty { }",
+			title: "EmptyClass",
+			input: "class Empty { }",
 			output: `class Empty {
     static __type = ["Empty", "5w!"];
 }`,
@@ -89,21 +91,21 @@ class B {
 		},
 		// ─── Type aliases ───
 		{
-			title:  "TypeAlias",
-			input:  "type Foo = string;",
+			title: "TypeAlias",
+			input: "type Foo = string;",
 			output: `const __ΩFoo = ["Foo", "&w!y"];
 type Foo = string;`,
 		},
 		{
-			title:  "ExportedTypeAlias",
-			input:  "export type Foo = string;",
+			title: "ExportedTypeAlias",
+			input: "export type Foo = string;",
 			output: `const __ΩFoo = ["Foo", "&w!y"];
 export { __ΩFoo as __ΩFoo };
 export type Foo = string;`,
 		},
 		{
-			title:  "MultipleTypeAliases",
-			input:  "type Foo = string;\ntype Bar = number;",
+			title: "MultipleTypeAliases",
+			input: "type Foo = string;\ntype Bar = number;",
 			output: `const __ΩFoo = ["Foo", "&w!y"];
 const __ΩBar = ["Bar", "'w!y"];
 type Foo = string;
@@ -146,8 +148,8 @@ class User {
 }`,
 		},
 		{
-			title:  "ImportAndClass",
-			input:  "import { User } from './models';\nclass Service { user: User; }",
+			title: "ImportAndClass",
+			input: "import { User } from './models';\nclass Service { user: User; }",
 			output: `import { User } from './models';
 class Service {
     user: User;
@@ -187,8 +189,8 @@ func TestReflectionTransformerWithTypeEraser(t *testing.T) {
 }`,
 		},
 		{
-			title:  "EmptyClass",
-			input:  "class Empty { }",
+			title: "EmptyClass",
+			input: "class Empty { }",
 			output: `class Empty {
     static __type = ["Empty", "5w!"];
 }`,
@@ -206,8 +208,8 @@ function add(a, b) { return a + b; }`,
 			output: `const __ΩFoo = ["Foo", "&w!y"];`,
 		},
 		{
-			title:  "ExportedTypeAliasElided",
-			input:  "export type Foo = string;",
+			title: "ExportedTypeAliasElided",
+			input: "export type Foo = string;",
 			output: `const __ΩFoo = ["Foo", "&w!y"];
 export { __ΩFoo as __ΩFoo };`,
 		},
@@ -215,8 +217,8 @@ export { __ΩFoo as __ΩFoo };`,
 		// Single-file: no Ω import is added — see the Imports section of
 		// TestReflectionTransformer for the rationale.
 		{
-			title:  "ImportWithClass",
-			input:  "import { User } from './models';\nclass Service { user: User; }",
+			title: "ImportWithClass",
+			input: "import { User } from './models';\nclass Service { user: User; }",
 			output: `import { User } from './models';
 class Service {
     user;

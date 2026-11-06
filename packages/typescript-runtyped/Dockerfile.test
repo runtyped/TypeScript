@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1
+#
+# Runs the full test, lint and format validation of the runtyped compiler in a
+# reproducible Linux environment, so it works anywhere Docker is available.
+#
+# Usage (from the repository root):
+#   docker build -t runtyped-typescript-test -f packages/typescript-runtyped/Dockerfile.test .
+#   docker run --rm runtyped-typescript-test
+#
+# The build context is filtered by Dockerfile.test.dockerignore (next to this
+# file; BuildKit picks it up automatically). It keeps host-built artifacts out
+# of the image: node_modules, built/, and tools/custom-gcl and tools/gotestsum,
+# which are native binaries cached against a hash and would otherwise be
+# mistaken for up-to-date Linux tools.
+#
+# Everything that needs the network (npm packages, Go modules, the custom
+# golangci-lint build, the LSP meta model) is fetched while building the image,
+# so `docker run` itself does not depend on external services.
+
+FROM golang:1.27-bookworm AS go
+
+# The full (non-slim) Node image ships git and a C toolchain: golangci-lint's
+# custom build clones its sources with git, and some Go tests need cgo.
+FROM node:22-bookworm
+
+COPY --from=go /usr/local/go /usr/local/go
+
+# GOTOOLCHAIN=local: never download a different Go toolchain at run time.
+# CI=true: hereby then gives Go tests a 45 minute timeout instead of 10.
+ENV GOPATH=/home/node/go \
+    GOTOOLCHAIN=local \
+    CI=true
+ENV PATH=/usr/local/go/bin:${GOPATH}/bin:${PATH}
+
+# /app/node_modules is where the runtime tests resolve @runtyped/type from
+# (they run node with NODE_PATH=/app/node_modules).
+RUN mkdir -p /home/node/repo /app && chown node:node /home/node/repo /app
+
+# Run as a regular user: some upstream tests check file permissions and behave
+# differently as root.
+USER node
+WORKDIR /home/node/repo
+
+# Go module downloads, in their own layer so they're cached across source edits.
+COPY --chown=node:node go.work ./
+COPY --chown=node:node tsc/go.mod tsc/go.sum ./tsc/
+COPY --chown=node:node tools/go.mod tools/go.sum ./tools/
+RUN GOWORK=off go -C tsc mod download \
+    && GOWORK=off go -C tools mod download
+
+COPY --chown=node:node . .
+
+RUN --mount=type=cache,target=/home/node/.npm,uid=1000,gid=1000 \
+    npm ci --no-audit --no-fund
+
+# Build gotestsum and the custom golangci-lint (with the repo's customlint
+# plugin) for Linux, and run code generation, which fetches the LSP meta model
+# from GitHub. Both are cached by input hash, so `docker run` reuses them.
+RUN npx hereby install-tools \
+    && npx hereby generate
+
+# @runtyped/type, at the version range the published package declares as its
+# peer dependency, for the reflection runtime tests.
+RUN --mount=type=cache,target=/home/node/.npm,uid=1000,gid=1000 \
+    npm install --prefix /app --no-save --no-package-lock --no-audit --no-fund \
+        "@runtyped/type@$(node -p "require('./packages/typescript-runtyped/npm/package.json').peerDependencies['@runtyped/type']")"
+
+# 1. check:format reports unformatted files. `validate` runs `format`, which
+#    rewrites them instead, so on its own it would never fail on formatting.
+# 2. validate --all builds and runs every test suite (Go compiler and language
+#    server tests including runtyped's, extension, TypeScript API incl. wasm,
+#    tools, smoke test) plus linting.
+# Both steps always run; the container exits non-zero if either fails.
+CMD ["sh", "-c", "status=0; npx hereby check:format || status=1; npx hereby validate --all || status=1; exit $status"]

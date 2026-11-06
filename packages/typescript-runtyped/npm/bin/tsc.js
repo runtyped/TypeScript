@@ -21,31 +21,31 @@ const goPlatform = PLATFORMS[process.platform];
 const goArch = ARCHES[process.arch];
 
 if (!goPlatform || !goArch) {
-  console.error(
-    `@runtyped/typescript: unsupported platform ${process.platform}/${process.arch}.\n` +
-      `Supported: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64.`
-  );
-  process.exit(1);
+    console.error(
+        `@runtyped/typescript: unsupported platform ${process.platform}/${process.arch}.\n` +
+            `Supported: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64.`,
+    );
+    process.exit(1);
 }
 
 const executable = `tsc-${goPlatform}-${goArch}${goPlatform === "windows" ? ".exe" : ""}`;
 const binaryPath = path.join(__dirname, "..", "binaries", executable);
 
 if (!fs.existsSync(binaryPath)) {
-  console.error(
-    `@runtyped/typescript: binary ${executable} is missing from this installation (corrupted package?).\n` +
-      `Try reinstalling: npm install @runtyped/typescript`
-  );
-  process.exit(1);
+    console.error(
+        `@runtyped/typescript: binary ${executable} is missing from this installation (corrupted package?).\n` +
+            `Try reinstalling: npm install @runtyped/typescript`,
+    );
+    process.exit(1);
 }
 
 const result = spawnSync(binaryPath, process.argv.slice(2), {
-  stdio: "inherit",
+    stdio: "inherit",
 });
 
 if (result.error) {
-  console.error(`@runtyped/typescript: failed to execute ${executable}: ${result.error.message}`);
-  process.exit(1);
+    console.error(`@runtyped/typescript: failed to execute ${executable}: ${result.error.message}`);
+    process.exit(1);
 }
 
 process.exit(result.status === null ? 1 : result.status);

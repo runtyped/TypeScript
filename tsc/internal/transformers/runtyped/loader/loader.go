@@ -2,8 +2,9 @@ package loader
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
+	"maps"
 	"strings"
 	"sync"
 	"testing/fstest"
@@ -13,9 +14,9 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/bundled"
 	"github.com/microsoft/TypeScript/tsc/internal/compiler"
 	"github.com/microsoft/TypeScript/tsc/internal/core"
+	"github.com/microsoft/TypeScript/tsc/internal/transformers/runtyped"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/tspath"
-	"github.com/microsoft/TypeScript/tsc/internal/transformers/runtyped"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs/cachedvfs"
 	"github.com/microsoft/TypeScript/tsc/internal/vfs/osvfs"
@@ -96,10 +97,9 @@ func (l *Loader) compileAndEmit(source, path string) (string, error) {
 	globalMu.Lock()
 	defer globalMu.Unlock()
 
-	files := make(map[string]string, len(l.knownFiles))
-	for k, v := range l.knownFiles {
-		files[k] = v
-	}
+	l.mu.Lock()
+	files := maps.Clone(l.knownFiles)
+	l.mu.Unlock()
 
 	// Build VFS: overlay known files on real filesystem
 	fsMap := make(map[string]any)
@@ -110,7 +110,7 @@ func (l *Loader) compileAndEmit(source, path string) (string, error) {
 	}
 
 	// Create VFS from map, wrap with bundled lib files
-	baseFS := vfstest.FromMap(fsMap, true)
+	baseFS := vfstest.FromMap(fsMap, tspath.CaseSensitive)
 	baseFS = bundled.WrapFS(baseFS)
 
 	// Also wrap with real OS filesystem so node_modules and other files are accessible
@@ -142,16 +142,21 @@ func (l *Loader) compileAndEmit(source, path string) (string, error) {
 	runtyped.SetReflectionModeOverride(reflectionMode)
 	defer runtyped.SetReflectionModeOverride("") // reset after compile
 
-	currentDir := filepath.Dir(path)
-
-	host := compiler.NewCompilerHost(currentDir, fs, bundled.LibPath(), nil, nil, nil)
-
-	config := &tsoptions.ParsedCommandLine{
-		ParsedConfig: &tsoptions.ParsedOptions{
-			CompilerOptions: compilerOptions,
-			FileNames:       []string{path},
-		},
+	rootedPath, ok := tspath.TryRootedFilePathFromAbsolute(path)
+	if !ok {
+		return "", fmt.Errorf("path must be absolute: %s", path)
 	}
+	currentDir := rootedPath.Directory()
+
+	host := compiler.NewCompilerHost(fs, bundled.LibPath(), nil, nil, nil)
+
+	config := tsoptions.NewParsedCommandLine(
+		compilerOptions,
+		[]tspath.RootedFilePath{rootedPath},
+		nil,
+		currentDir,
+		fs.CaseSensitivity(),
+	)
 
 	program := compiler.NewProgram(compiler.ProgramOptions{
 		Config: config,
@@ -161,7 +166,7 @@ func (l *Loader) compileAndEmit(source, path string) (string, error) {
 	// Find the target source file
 	var targetFile *ast.SourceFile
 	for _, sf := range program.GetSourceFiles() {
-		if sf.FileName() == path {
+		if sf.FileName() == rootedPath {
 			targetFile = sf
 			break
 		}
@@ -174,13 +179,13 @@ func (l *Loader) compileAndEmit(source, path string) (string, error) {
 	var output string
 	emitResult := program.Emit(context.Background(), compiler.EmitOptions{
 		TargetSourceFiles: []*ast.SourceFile{targetFile},
-		WriteFile: func(fileName string, text string, _ *compiler.WriteFileData) error {
+		WriteFile: func(fileName tspath.RootedFilePath, text string, _ *compiler.WriteFileData) error {
 			output = text
 			return nil
 		},
 	})
 	if emitResult == nil {
-		return "", fmt.Errorf("emit returned nil result")
+		return "", errors.New("emit returned nil result")
 	}
 
 	// Collect diagnostics
@@ -204,63 +209,63 @@ type overlayFS struct {
 	overlay vfs.FS
 }
 
-func (o *overlayFS) UseCaseSensitiveFileNames() bool {
-	return true
+func (o *overlayFS) CaseSensitivity() tspath.CaseSensitivity {
+	return tspath.CaseSensitive
 }
 
-func (o *overlayFS) FileExists(path string) bool {
+func (o *overlayFS) FileExists(path tspath.RootedFilePath) bool {
 	if o.base.FileExists(path) {
 		return true
 	}
 	return o.overlay.FileExists(path)
 }
 
-func (o *overlayFS) ReadFile(path string) (string, bool) {
+func (o *overlayFS) ReadFile(path tspath.RootedFilePath) (string, bool) {
 	if contents, ok := o.base.ReadFile(path); ok {
 		return contents, true
 	}
 	return o.overlay.ReadFile(path)
 }
 
-func (o *overlayFS) WriteFile(path string, data string) error {
+func (o *overlayFS) WriteFile(path tspath.RootedFilePath, data string) error {
 	return o.overlay.WriteFile(path, data)
 }
 
-func (o *overlayFS) AppendFile(path string, data string) error {
+func (o *overlayFS) AppendFile(path tspath.RootedFilePath, data string) error {
 	return o.overlay.AppendFile(path, data)
 }
 
-func (o *overlayFS) Remove(path string) error {
+func (o *overlayFS) Remove(path tspath.RootedPath) error {
 	return o.overlay.Remove(path)
 }
 
-func (o *overlayFS) Chtimes(path string, aTime time.Time, mTime time.Time) error {
+func (o *overlayFS) Chtimes(path tspath.RootedPath, aTime time.Time, mTime time.Time) error {
 	return o.overlay.Chtimes(path, aTime, mTime)
 }
 
-func (o *overlayFS) DirectoryExists(path string) bool {
+func (o *overlayFS) DirectoryExists(path tspath.RootedDirectoryPath) bool {
 	if o.base.DirectoryExists(path) {
 		return true
 	}
 	return o.overlay.DirectoryExists(path)
 }
 
-func (o *overlayFS) GetAccessibleEntries(path string) vfs.Entries {
+func (o *overlayFS) GetAccessibleEntries(path tspath.RootedDirectoryPath) vfs.Entries {
 	if o.base.DirectoryExists(path) {
 		return o.base.GetAccessibleEntries(path)
 	}
 	return o.overlay.GetAccessibleEntries(path)
 }
 
-func (o *overlayFS) Stat(path string) vfs.FileInfo {
+func (o *overlayFS) Stat(path tspath.RootedPath) vfs.FileInfo {
 	if fi := o.base.Stat(path); fi != nil {
 		return fi
 	}
 	return o.overlay.Stat(path)
 }
 
-func (o *overlayFS) Realpath(path string) string {
-	if o.base.FileExists(path) {
+func (o *overlayFS) Realpath(path tspath.RootedPath) tspath.RootedPath {
+	if o.base.FileExists(tspath.RootedFilePathFromPath(path)) {
 		return path
 	}
 	return o.overlay.Realpath(path)

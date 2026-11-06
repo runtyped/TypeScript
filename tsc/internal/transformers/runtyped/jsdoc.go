@@ -61,11 +61,10 @@ func ParseJSDocAttributeFromText(comment string, attribute string) (string, bool
 	// leading `\s*\*` removed.
 	lines := strings.Split(content, "\n")
 	for i, v := range lines {
-		indexOfStar := strings.Index(v, "*")
-		if indexOfStar == -1 {
-			lines[i] = strings.TrimSpace(v)
+		if _, afterStar, found := strings.Cut(v, "*"); found {
+			lines[i] = strings.TrimSpace(afterStar)
 		} else {
-			lines[i] = strings.TrimSpace(v[indexOfStar+1:])
+			lines[i] = strings.TrimSpace(v)
 		}
 	}
 	return strings.Join(lines, "\n"), true

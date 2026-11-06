@@ -79,9 +79,9 @@ func TestLoader_CustomCompilerOptions(t *testing.T) {
 // a type-only namespace. The Go loader performs a real JS emit, where a
 // namespace containing only types is correctly elided (standard tsc behavior).
 // The Go test therefore asserts the meaningful contract instead:
-//   1. Omega reflection vars ARE generated for interfaces nested in namespaces.
-//   2. With a runtime member, the namespace wrapper and Models.X assignments
-//      survive the emit.
+//  1. Omega reflection vars ARE generated for interfaces nested in namespaces.
+//  2. With a runtime member, the namespace wrapper and Models.X assignments
+//     survive the emit.
 func TestLoader_NamespaceExports(t *testing.T) {
 	t.Parallel()
 	l := loader.NewLoader(loader.LoaderOptions{Reflection: loader.ReflectionDefault})

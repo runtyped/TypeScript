@@ -4,13 +4,12 @@
 package config
 
 import (
-	"encoding/json"
-	"path"
-	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/microsoft/TypeScript/tsc/internal/json"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
-	"github.com/microsoft/TypeScript/tsc/internal/vfs"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
 
 // Mode represents the reflection mode for a file.
@@ -270,7 +269,10 @@ func toString(v any) string {
 		}
 		return "false"
 	default:
-		b, _ := json.Marshal(val)
+		b, err := json.Marshal(val, json.Deterministic(true))
+		if err != nil {
+			return ""
+		}
 		return string(b)
 	}
 }
@@ -317,9 +319,9 @@ func resolvePaths(baseDir string, paths any) {
 		return
 	}
 
-	for i := 0; i < len(arr); i++ {
+	for i := range arr {
 		p := arr[i]
-		if filepath.IsAbs(p) {
+		if tspath.PathIsAbsolute(p) {
 			continue
 		}
 		exclude := false
@@ -328,9 +330,9 @@ func resolvePaths(baseDir string, paths any) {
 			p = p[1:]
 		}
 		if strings.HasPrefix(p, "./") || strings.Contains(p, "/") {
-			p = filepath.Join(baseDir, p)
+			p = tspath.ResolvePath(baseDir, p)
 		}
-		p = strings.ReplaceAll(p, "\\", "/")
+		p = tspath.NormalizeSlashes(p)
 		if exclude {
 			p = "!" + p
 		}
@@ -356,9 +358,9 @@ func appendPaths(strategy string, parent []string, existing []string) []string {
 type currentConfig struct {
 	compilerOptions map[string]any
 	mergeStrategy   string
-	reflection       any // Mode or []string
-	exclude          []string
-	extends          any
+	reflection      any // Mode or []string
+	exclude         []string
+	extends         any
 }
 
 // applyConfigValues merges parent config values into the current config.
@@ -414,14 +416,18 @@ func getReflectionPaths(reflection any) []string {
 
 // readTsConfig reads and parses a tsconfig.json file from the VFS.
 func readTsConfig(host tsoptions.ParseConfigHost, configPath string) *TsConfigJson {
-	fs := host.FS()
-	content, ok := fs.ReadFile(configPath)
+	rootedPath, ok := tspath.TryRootedFilePathFromAbsolute(configPath)
+	if !ok {
+		return nil
+	}
+	content, ok := host.FS().ReadFile(rootedPath)
 	if !ok {
 		return nil
 	}
 
 	var raw map[string]any
-	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+	// Allow duplicate keys (last one wins), matching encoding/json v1 behaviour.
+	if err := json.Unmarshal([]byte(content), &raw, json.AllowDuplicateNames(true)); err != nil {
 		return nil
 	}
 
@@ -470,11 +476,11 @@ func GetConfigResolver(
 		}
 		configFile := readTsConfig(host, tsConfigPath)
 		if configFile != nil {
-			applyConfigValues(config, configFile, path.Dir(tsConfigPath))
+			applyConfigValues(config, configFile, tspath.GetDirectoryPath(tsConfigPath))
 		}
 	} else {
 		if sourceFile.FileName != "" {
-			baseDir := path.Dir(sourceFile.FileName)
+			baseDir := tspath.GetDirectoryPath(sourceFile.FileName)
 			configPath := findConfigFile(host, baseDir)
 			if configPath != "" {
 				tsConfigPath = configPath
@@ -483,7 +489,7 @@ func GetConfigResolver(
 				}
 				configFile := readTsConfig(host, tsConfigPath)
 				if configFile != nil {
-					applyConfigValues(config, configFile, path.Dir(tsConfigPath))
+					applyConfigValues(config, configFile, tspath.GetDirectoryPath(tsConfigPath))
 				}
 			}
 		}
@@ -491,7 +497,7 @@ func GetConfigResolver(
 
 	// Follow extends chain
 	if tsConfigPath != "" {
-		basePath := path.Dir(tsConfigPath)
+		basePath := tspath.GetDirectoryPath(tsConfigPath)
 		seen := map[string]bool{tsConfigPath: true}
 
 		extendsQueue := normalizeExtends(config.extends)
@@ -501,10 +507,10 @@ func GetConfigResolver(
 			extendsQueue = extendsQueue[1:]
 
 			var resolvedPath string
-			if filepath.IsAbs(extendPath) {
+			if tspath.PathIsAbsolute(extendPath) {
 				resolvedPath = extendPath
 			} else {
-				resolvedPath = filepath.Join(basePath, extendPath)
+				resolvedPath = tspath.ResolvePath(basePath, extendPath)
 			}
 
 			if seen[resolvedPath] {
@@ -517,17 +523,16 @@ func GetConfigResolver(
 				continue
 			}
 
-			nextBasePath := path.Dir(resolvedPath)
+			nextBasePath := tspath.GetDirectoryPath(resolvedPath)
 			applyConfigValues(config, nextConfig, nextBasePath)
 
 			additionalExtends := normalizeExtends(nextConfig.Extends)
-			for i := len(additionalExtends) - 1; i >= 0; i-- {
-				e := additionalExtends[i]
+			for _, e := range slices.Backward(additionalExtends) {
 				var additionalPath string
-				if filepath.IsAbs(e) {
+				if tspath.PathIsAbsolute(e) {
 					additionalPath = e
 				} else {
-					additionalPath = filepath.Join(nextBasePath, e)
+					additionalPath = tspath.ResolvePath(nextBasePath, e)
 				}
 				extendsQueue = append([]string{additionalPath}, extendsQueue...)
 			}
@@ -585,11 +590,11 @@ func GetConfigResolver(
 // findConfigFile searches for tsconfig.json starting from baseDir upward.
 func findConfigFile(host tsoptions.ParseConfigHost, baseDir string) string {
 	for {
-		candidate := filepath.Join(baseDir, "tsconfig.json")
-		if host.FS().FileExists(candidate) {
+		candidate := tspath.ResolvePath(baseDir, "tsconfig.json")
+		if rooted, ok := tspath.TryRootedFilePathFromAbsolute(candidate); ok && host.FS().FileExists(rooted) {
 			return candidate
 		}
-		parent := path.Dir(baseDir)
+		parent := tspath.GetDirectoryPath(baseDir)
 		if parent == baseDir {
 			break
 		}
@@ -597,6 +602,3 @@ func findConfigFile(host tsoptions.ParseConfigHost, baseDir string) string {
 	}
 	return ""
 }
-
-// Suppress unused import warning
-var _ vfs.FS

@@ -54,7 +54,7 @@ func TestConvertStackNodeToExpression(t *testing.T) {
 		t.Fatal("expected to find numeric and string literal initializers in foreign source")
 	}
 
-	tc := newTypeCompiler(printer.NewNodeFactory(printer.NewEmitContext()), nil, nil)
+	tc := newTypeCompiler(printer.NewEmitContext(), nil, nil)
 
 	// Foreign source nodes must be re-created fresh with synthetic locations.
 	converted := tc.convertStackNodeToExpression(numLit)

@@ -1,0 +1,49 @@
+# Build context filter for Dockerfile.test (BuildKit applies it automatically
+# because it sits next to the Dockerfile and shares its name). Paths are
+# relative to the build context, i.e. the repository root.
+#
+# The goal is a clean checkout: nothing built or installed on the host may leak
+# into the Linux image.
+
+# Git metadata isn't needed by any build, test or lint step.
+.git
+
+# Host-installed dependencies (contain platform-specific binaries).
+**/node_modules
+
+# Host build output.
+built
+**/dist
+**/*.tsbuildinfo
+**/*.tgz
+tsc/cmd/tsc/tsc
+tsc/tsc
+
+# Host-built tools, cached against a hash file. If copied, the hash would match
+# and Linux would try to execute macOS/Windows binaries.
+tools/custom-gcl
+tools/custom-gcl.exe
+tools/custom-gcl.hash
+tools/custom-gcl.exe.hash
+tools/gotestsum
+tools/gotestsum.exe
+tools/gotestsum.hash
+tools/gotestsum.exe.hash
+
+# Generated or downloaded at image build time.
+tools/scripts/lsp/metaModel.json
+packages/vscode-typescript/l10n/bundle.l10n.qps-ploc.json
+packages/vscode-typescript/package.nls.qps-ploc.json
+
+# Local test output.
+tsc/testdata/baselines/local
+tsc/testdata/baselines/tmp
+coverage
+**/*.test
+**/*.out
+**/*.log
+
+# Editor and OS clutter (.vscode is partly committed, so it stays).
+.idea
+**/.DS_Store
+go.work.sum

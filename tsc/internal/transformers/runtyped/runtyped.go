@@ -70,19 +70,19 @@ type reflectionTransformer struct {
 	additionalReExports []*ast.Node
 
 	// Optional chain transform state (per-file)
-	tempResultIdentifier *ast.Node
+	tempResultIdentifier    *ast.Node
 	optionalChainTransforms map[*ast.Node]*optionalChainInfo
 }
 
 // optionalChainInfo stores metadata about a transformed optional chain expression,
 // replacing the TS monkey-patch pattern (__optionalChainTransform on nodes).
 type optionalChainInfo struct {
-	tempVar     *ast.Node // the Ωr identifier
-	condition   *ast.Node // Ωr == null
-	whenTrue    *ast.Node // void 0
-	assignBase  *ast.Node // Ωr = baseExpression (the left side of the outer comma)
-	assignPart  *ast.Node // Ωr.method.Ω = types (the left side of the inner comma)
-	callPart    *ast.Node // Ωr.method<T>() (the right side of the inner comma)
+	tempVar    *ast.Node // the Ωr identifier
+	condition  *ast.Node // Ωr == null
+	whenTrue   *ast.Node // void 0
+	assignBase *ast.Node // Ωr = baseExpression (the left side of the outer comma)
+	assignPart *ast.Node // Ωr.method.Ω = types (the left side of the inner comma)
+	callPart   *ast.Node // Ωr.method<T>() (the right side of the inner comma)
 }
 
 func (tx *reflectionTransformer) visit(node *ast.Node) *ast.Node {
@@ -163,7 +163,7 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 	tx.tempResultIdentifier = nil
 	tx.optionalChainTransforms = make(map[*ast.Node]*optionalChainInfo)
 	tx.sourceFile = node
-	tx.tc = newTypeCompiler(tx.Factory(), tx.emitResolver, tx.sourceFiles)
+	tx.tc = newTypeCompiler(tx.EmitContext(), tx.emitResolver, tx.sourceFiles)
 	tx.tc.sourceFile = node
 
 	// Visit all children (which collects omegaStatements, additionalImports, etc.)
@@ -422,7 +422,7 @@ func (tx *reflectionTransformer) visitTypeAliasDeclaration(node *ast.TypeAliasDe
 			tx.tc.compileDeclarationOrder = append(tx.tc.compileDeclarationOrder, declNode)
 		}
 		tx.tc.compileDeclarations[declNode] = &compileDeclEntry{
-			name:      getIdentifierName(visited.Name()),
+			name:       getIdentifierName(visited.Name()),
 			sourceFile: tx.sourceFile,
 		}
 	}
@@ -443,7 +443,7 @@ func (tx *reflectionTransformer) visitInterfaceDeclaration(node *ast.InterfaceDe
 			tx.tc.compileDeclarationOrder = append(tx.tc.compileDeclarationOrder, declNode)
 		}
 		tx.tc.compileDeclarations[declNode] = &compileDeclEntry{
-			name:      getIdentifierName(visited.Name()),
+			name:       getIdentifierName(visited.Name()),
 			sourceFile: tx.sourceFile,
 		}
 	}
@@ -464,7 +464,7 @@ func (tx *reflectionTransformer) visitEnumDeclaration(node *ast.EnumDeclaration)
 			tx.tc.compileDeclarationOrder = append(tx.tc.compileDeclarationOrder, declNode)
 		}
 		tx.tc.compileDeclarations[declNode] = &compileDeclEntry{
-			name:      getIdentifierName(visited.Name()),
+			name:       getIdentifierName(visited.Name()),
 			sourceFile: tx.sourceFile,
 		}
 	}
@@ -514,7 +514,7 @@ func (tx *reflectionTransformer) visitFunctionDeclaration(node *ast.Node) *ast.N
 			encodedType))
 
 	// For module-level functions, hoist the __type assignment
-	if node.Parent == nil || node.Parent.Kind == ast.KindSourceFile {
+	if parent := tx.parseTreeParent(node.AsNode()); parent == nil || parent.Kind == ast.KindSourceFile {
 		tx.tc.functionTypeAssignments = append(tx.tc.functionTypeAssignments, typeAssignment)
 		return visited.AsNode()
 	}
@@ -600,6 +600,10 @@ func (tx *reflectionTransformer) createFunctionExpressionFromDeclaration(decl *a
 
 // injectResetOmega prepends `fn.Ω = undefined` (or appropriate container) to the
 // function body if the function has ReceiveType<T> parameters.
+func (tx *reflectionTransformer) parseTreeParent(node *ast.Node) *ast.Node {
+	return parseTreeParent(tx.EmitContext(), node)
+}
+
 func (tx *reflectionTransformer) injectResetOmega(node *ast.Node) *ast.Node {
 	var parameters []*ast.Node
 	var body *ast.Node
@@ -651,7 +655,7 @@ func (tx *reflectionTransformer) injectResetOmega(node *ast.Node) *ast.Node {
 		// For arrow functions, the container comes from the parent variable declaration
 		// e.g. const fn = <T>(type: ReceiveType<T>) => {} → fn.Ω = undefined
 		// If parent is not a VariableDeclaration, we can't set Ω
-		parent := node.Parent
+		parent := tx.parseTreeParent(node)
 		if parent != nil && parent.Kind == ast.KindVariableDeclaration {
 			varDecl := parent.AsVariableDeclaration()
 			if varDecl.Name() != nil && varDecl.Name().Kind == ast.KindIdentifier {
@@ -788,7 +792,7 @@ func (tx *reflectionTransformer) visitParameterDeclaration(node *ast.ParameterDe
 	typeParamName := firstRef.TypeName.AsIdentifier().Text
 
 	// Find the parent function to get type parameters
-	parent := visited.Parent
+	parent := tx.parseTreeParent(node.AsNode())
 	if parent == nil {
 		return visited.AsNode()
 	}
@@ -797,7 +801,7 @@ func (tx *reflectionTransformer) visitParameterDeclaration(node *ast.ParameterDe
 	switch parent.Kind {
 	case ast.KindConstructor:
 		// Constructor's type params are on the class
-		classNode := parent.Parent
+		classNode := tx.parseTreeParent(parent)
 		if classNode != nil && (classNode.Kind == ast.KindClassDeclaration || classNode.Kind == ast.KindClassExpression) {
 			typeParameters = classNode.ClassLikeData().TypeParameters
 		}
@@ -831,7 +835,7 @@ func (tx *reflectionTransformer) visitParameterDeclaration(node *ast.ParameterDe
 	switch parent.Kind {
 	case ast.KindArrowFunction:
 		// Arrow function: container is the variable name from parent declaration
-		varDecl := parent.Parent
+		varDecl := tx.parseTreeParent(parent)
 		if varDecl != nil && varDecl.Kind == ast.KindVariableDeclaration {
 			if varDecl.AsVariableDeclaration().Name() != nil && varDecl.AsVariableDeclaration().Name().Kind == ast.KindIdentifier {
 				container = factory.NewIdentifier(varDecl.AsVariableDeclaration().Name().AsIdentifier().Text)
@@ -1021,8 +1025,8 @@ func (tx *reflectionTransformer) buildOptionalChainTransform(
 		propChain := expr.AsPropertyAccessExpression()
 		if propChain.QuestionDotToken != nil {
 			return tx.doOptionalChainTransform(
-				propChain.Expression,  // base: this.service
-				propChain.Name(),      // method name
+				propChain.Expression, // base: this.service
+				propChain.Name(),     // method name
 				callExpr.TypeArguments,
 				callExpr.Arguments,
 				packedTypeExpr,
@@ -1038,8 +1042,8 @@ func (tx *reflectionTransformer) buildOptionalChainTransform(
 		if propAccess.Expression != nil && propAccess.Expression.Kind == ast.KindCallExpression &&
 			tx.expressionContainsOptionalChain(propAccess.Expression) {
 			return tx.doOptionalChainTransform(
-				propAccess.Expression,  // base: this.service?.getClient()
-				propAccess.Name(),       // method name
+				propAccess.Expression, // base: this.service?.getClient()
+				propAccess.Name(),     // method name
 				callExpr.TypeArguments,
 				callExpr.Arguments,
 				packedTypeExpr,
@@ -1148,9 +1152,9 @@ func (tx *reflectionTransformer) handleChainContinuation(node *ast.Node) *ast.No
 
 	// Build the access chain as we walk down to find a transformed optional chain
 	type chainAccess struct {
-		kind  string // "prop", "call", "elem"
-		name  *ast.Node
-		args  *ast.NodeList
+		kind     string // "prop", "call", "elem"
+		name     *ast.Node
+		args     *ast.NodeList
 		typeArgs *ast.NodeList
 	}
 	var accessChain []chainAccess
@@ -1635,6 +1639,12 @@ func (tx *reflectionTransformer) visitExportDeclaration(node *ast.ExportDeclarat
 	var omegaSpecifiers []*ast.Node
 	for _, spec := range namedExports.Elements.Nodes {
 		specNode := spec.AsExportSpecifier()
+		// ES2022 allows string-literal export names (`export { "a b" } from ...`);
+		// those can't be turned into a __Ω identifier, so skip them.
+		if specNode.Name().Kind != ast.KindIdentifier ||
+			specNode.PropertyName != nil && specNode.PropertyName.Kind != ast.KindIdentifier {
+			continue
+		}
 		exportedName := specNode.Name().AsIdentifier().Text
 		originalName := exportedName
 		if specNode.PropertyName != nil {

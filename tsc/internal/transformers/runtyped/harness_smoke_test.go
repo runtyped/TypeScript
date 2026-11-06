@@ -10,10 +10,12 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/core"
 	"github.com/microsoft/TypeScript/tsc/internal/testutil/harnessutil"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
 
 // Smoke test: verify CompileFiles works with the runtyped transformer
 func TestCompileFilesMultiFile(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: "import { Logger } from './logger.js';\nfunction fn(logger: Logger) {}"},
 		{UnitName: "logger.ts", Content: "export class Logger {}"},
@@ -30,7 +32,7 @@ func TestCompileFilesMultiFile(t *testing.T) {
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts", "/logger.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts", "/logger.ts"},
 			},
 		},
 		"/",
@@ -70,11 +72,11 @@ func TestNamedReExportMultiFile(t *testing.T) {
 	compile := func(t *testing.T, files map[string]string) map[string]string {
 		t.Helper()
 		var inputFiles []*harnessutil.TestFile
-		var fileNames []string
+		var fileNames []tspath.RootedFilePath
 		for name, content := range files {
 			path := "/" + name
 			inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-			fileNames = append(fileNames, path)
+			fileNames = append(fileNames, tspath.RootedFilePathFromNormalized(path))
 		}
 		result := harnessutil.CompileFiles(t,
 			inputFiles,
@@ -90,8 +92,8 @@ func TestNamedReExportMultiFile(t *testing.T) {
 			nil,
 		)
 		outputs := make(map[string]string)
-		result.JS.Entries()(func(key string, value *harnessutil.TestFile) bool {
-			outputs[key] = value.Content
+		result.JS.Entries()(func(key tspath.RootedFilePath, value *harnessutil.TestFile) bool {
+			outputs[key.AsString()] = value.Content
 			return true
 		})
 		return outputs
@@ -171,10 +173,11 @@ func TestNamedReExportMultiFile(t *testing.T) {
 	// to determine whether the exported symbol is a type (interface/type alias/enum)
 	// or a value. Deferred until cross-file resolution is implemented.
 	t.Run("NamedReExportNoOp", func(t *testing.T) {
+		t.Parallel()
 		outputs := compile(t, map[string]string{
-			"app.ts":     "import { config } from './index';",
-			"index.ts":   "export { config } from './config';",
-			"config.ts":  "export const config = { debug: true };",
+			"app.ts":    "import { config } from './index';",
+			"index.ts":  "export { config } from './config';",
+			"config.ts": "export const config = { debug: true };",
 		})
 		indexJS, ok := outputs["/index.js"]
 		if !ok {
@@ -200,10 +203,10 @@ func TestCrossFileResolution(t *testing.T) {
 	compile := func(t *testing.T, files map[string]string) map[string]string {
 		t.Helper()
 		var inputFiles []*harnessutil.TestFile
-		var fileNames []string
+		var fileNames []tspath.RootedFilePath
 		for name, content := range files {
 			inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-			fileNames = append(fileNames, "/"+name)
+			fileNames = append(fileNames, tspath.RootedFilePathFromNormalized("/"+name))
 		}
 		result := harnessutil.CompileFiles(t,
 			inputFiles,
@@ -219,8 +222,8 @@ func TestCrossFileResolution(t *testing.T) {
 			nil,
 		)
 		outputs := make(map[string]string)
-		result.JS.Entries()(func(key string, value *harnessutil.TestFile) bool {
-			outputs[key] = value.Content
+		result.JS.Entries()(func(key tspath.RootedFilePath, value *harnessutil.TestFile) bool {
+			outputs[key.AsString()] = value.Content
 			return true
 		})
 		return outputs
@@ -253,8 +256,8 @@ func TestCrossFileResolution(t *testing.T) {
 	t.Run("ResolveImportDTS", func(t *testing.T) {
 		t.Parallel()
 		outputs := compile(t, map[string]string{
-			"app.ts":       "import { Logger } from './logger';\nfunction fn(logger: Logger) {}",
-			"logger.d.ts":  "export declare class Logger {}",
+			"app.ts":      "import { Logger } from './logger';\nfunction fn(logger: Logger) {}",
+			"logger.d.ts": "export declare class Logger {}",
 		})
 		appJS, ok := outputs["/app.js"]
 		if !ok {
@@ -269,7 +272,7 @@ func TestCrossFileResolution(t *testing.T) {
 	t.Run("DeclarationFile", func(t *testing.T) {
 		t.Parallel()
 		outputs := compile(t, map[string]string{
-			"app.ts": "import { T } from './types';\ntypeOf<T>();",
+			"app.ts":     "import { T } from './types';\ntypeOf<T>();",
 			"types.d.ts": "export type T = string;\nexport type __ΩT = any[];",
 		})
 		appJS, ok := outputs["/app.js"]
@@ -314,9 +317,9 @@ func TestCrossFileResolution(t *testing.T) {
 	t.Run("ReExportExisting", func(t *testing.T) {
 		t.Parallel()
 		outputs := compile(t, map[string]string{
-			"app.ts":     "import { Cache } from './module';\ntypeOf<Cache>();",
-			"module.ts":  "import { Cache } from './class';\nexport { Cache }",
-			"class.ts":   "export class Cache {}",
+			"app.ts":    "import { Cache } from './module';\ntypeOf<Cache>();",
+			"module.ts": "import { Cache } from './class';\nexport { Cache }",
+			"class.ts":  "export class Cache {}",
 		})
 		appJS, ok := outputs["/app.js"]
 		if !ok {
@@ -330,6 +333,7 @@ func TestCrossFileResolution(t *testing.T) {
 // ─── ReceiveType tests (require binder/locals) ───
 
 func TestReceiveTypePassing(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `function getType<T>(type?: ReceiveType<T>) {
 }
@@ -348,7 +352,7 @@ getType<string>();`},
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",
@@ -373,6 +377,7 @@ getType<string>();`},
 }
 
 func TestReceiveTypeArrowFunction(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `(<T>(type?: ReceiveType<T>) => {})<string>();`},
 	}
@@ -388,7 +393,7 @@ func TestReceiveTypeArrowFunction(t *testing.T) {
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",
@@ -404,6 +409,7 @@ func TestReceiveTypeArrowFunction(t *testing.T) {
 }
 
 func TestGlobalsPartial(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `interface User {}
 export type a = Partial<User>;`},
@@ -420,7 +426,7 @@ export type a = Partial<User>;`},
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",
@@ -440,6 +446,7 @@ export type a = Partial<User>;`},
 }
 
 func TestFunctionTypeHoisting(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `function greet(name: string): string {
     return "Hello, " + name;
@@ -457,7 +464,7 @@ func TestFunctionTypeHoisting(t *testing.T) {
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",
@@ -485,6 +492,7 @@ func TestFunctionTypeHoisting(t *testing.T) {
 }
 
 func TestFunctionTypeHoistingBlockScoped(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `if (true) {
     function insideIf(x: number): void {}
@@ -502,7 +510,7 @@ func TestFunctionTypeHoistingBlockScoped(t *testing.T) {
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",
@@ -530,6 +538,7 @@ func TestFunctionTypeHoistingBlockScoped(t *testing.T) {
 }
 
 func TestInferTypeFix(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -645,6 +654,7 @@ function addName<T>(value: T): T & Named {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			inputFiles := []*harnessutil.TestFile{
 				{UnitName: "app.ts", Content: tt.content},
 			}
@@ -660,7 +670,7 @@ function addName<T>(value: T): T & Named {
 							ModuleResolution: core.ModuleResolutionKindNode10,
 							Target:           core.ScriptTargetES2016,
 						},
-						FileNames: []string{"/app.ts"},
+						FileNames: []tspath.RootedFilePath{"/app.ts"},
 					},
 				},
 				"/",
@@ -682,6 +692,7 @@ function addName<T>(value: T): T & Named {
 }
 
 func TestDeclarationFileExportAll(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `import { T, T2 } from './module';
 typeOf<T>();
@@ -704,7 +715,7 @@ export type __ΩT2 = any[];`},
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts", "/module.d.ts", "/module/types.d.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts", "/module.d.ts", "/module/types.d.ts"},
 			},
 		},
 		"/",
@@ -724,6 +735,7 @@ export type __ΩT2 = any[];`},
 }
 
 func TestResolveImportNodeModules(t *testing.T) {
+	t.Parallel()
 	inputFiles := []*harnessutil.TestFile{
 		{UnitName: "app.ts", Content: `import { Logger } from 'logger';
 function fn(logger: Logger) {}`},
@@ -741,7 +753,7 @@ function fn(logger: Logger) {}`},
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts", "/node_modules/logger/index.d.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts", "/node_modules/logger/index.d.ts"},
 			},
 		},
 		"/",
@@ -761,6 +773,7 @@ function fn(logger: Logger) {}`},
 }
 
 func TestTranspileSpecs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -874,9 +887,9 @@ class Vehicle {
 			checks: []string{`() => Guest, "Guest"`},
 		},
 		{
-			name: "IntrinsicType",
+			name:    "IntrinsicType",
 			content: `export type A = Capitalize<'a'>;`,
-			checks: []string{"__ΩCapitalize"},
+			checks:  []string{"__ΩCapitalize"},
 		},
 		{
 			name: "KeyofThisExpression",
@@ -953,6 +966,7 @@ function mySerialize<T>(type?: ReceiveType<T>) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			inputFiles := []*harnessutil.TestFile{
 				{UnitName: "app.ts", Content: tt.content},
 			}
@@ -968,7 +982,7 @@ function mySerialize<T>(type?: ReceiveType<T>) {
 							ModuleResolution: core.ModuleResolutionKindNode10,
 							Target:           core.ScriptTargetES2016,
 						},
-						FileNames: []string{"/app.ts"},
+						FileNames: []tspath.RootedFilePath{"/app.ts"},
 					},
 				},
 				"/",
@@ -1008,19 +1022,19 @@ func TestDeclarationTransformer(t *testing.T) {
 		checks  []string
 	}{
 		{
-			name: "TypeAlias",
+			name:    "TypeAlias",
 			content: `export type User = { name: string; age: number };`,
-			checks: []string{"export declare type __ΩUser = any[];"},
+			checks:  []string{"export declare type __ΩUser = any[];"},
 		},
 		{
-			name: "Interface",
+			name:    "Interface",
 			content: `export interface IUser { name: string; }`,
-			checks: []string{"export declare type __ΩIUser = any[];"},
+			checks:  []string{"export declare type __ΩIUser = any[];"},
 		},
 		{
-			name: "Enum",
+			name:    "Enum",
 			content: `export enum Color { Red, Green, Blue }`,
-			checks: []string{"export declare type __ΩColor = any[];"},
+			checks:  []string{"export declare type __ΩColor = any[];"},
 		},
 		{
 			name: "MultipleTypes",
@@ -1057,7 +1071,7 @@ export type Public = { y: string };`,
 				&tsoptions.ParsedCommandLine{
 					ParsedConfig: &tsoptions.ParsedOptions{
 						CompilerOptions: compilerOptions,
-						FileNames:       []string{"/app.ts"},
+						FileNames:       []tspath.RootedFilePath{"/app.ts"},
 					},
 				},
 				"/",
@@ -1066,7 +1080,7 @@ export type Public = { y: string };`,
 
 			// Find the .d.ts output
 			var dtsContent string
-			result.DTS.Entries()(func(key string, value *harnessutil.TestFile) bool {
+			result.DTS.Entries()(func(key tspath.RootedFilePath, value *harnessutil.TestFile) bool {
 				dtsContent = value.Content
 				return false
 			})
@@ -1133,10 +1147,10 @@ function processResult(r: AppResult<number>) {
 	compile := func(t *testing.T, files map[string]string) map[string]string {
 		t.Helper()
 		var inputFiles []*harnessutil.TestFile
-		var fileNames []string
+		var fileNames []tspath.RootedFilePath
 		for name, content := range files {
 			inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-			fileNames = append(fileNames, "/"+name)
+			fileNames = append(fileNames, tspath.RootedFilePathFromNormalized("/"+name))
 		}
 		result := harnessutil.CompileFiles(t,
 			inputFiles,
@@ -1152,8 +1166,8 @@ function processResult(r: AppResult<number>) {
 			nil,
 		)
 		outputs := make(map[string]string)
-		result.JS.Entries()(func(key string, value *harnessutil.TestFile) bool {
-			outputs[key] = value.Content
+		result.JS.Entries()(func(key tspath.RootedFilePath, value *harnessutil.TestFile) bool {
+			outputs[key.AsString()] = value.Content
 			return true
 		})
 		return outputs
@@ -1218,7 +1232,7 @@ const type = typeOf<ReadUser>();`},
 							ModuleResolution: core.ModuleResolutionKindNode10,
 							Target:           tt.target,
 						},
-						FileNames: []string{"/app.ts"},
+						FileNames: []tspath.RootedFilePath{"/app.ts"},
 					},
 				},
 				"/",
@@ -1245,11 +1259,10 @@ const type = typeOf<ReadUser>();`},
 // The JS code should set module.exports to the result it wants to assert on.
 func runJSWithNode(t *testing.T, js string) string {
 	t.Helper()
-	tmpFile, err := os.CreateTemp("", "runtyped-test-*.js")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "runtyped-test-*.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(tmpFile.Name())
 	if _, err := tmpFile.WriteString(js); err != nil {
 		t.Fatal(err)
 	}
@@ -1281,7 +1294,7 @@ func compileSingleFileJS(t *testing.T, content string) string {
 					ModuleResolution: core.ModuleResolutionKindNode10,
 					Target:           core.ScriptTargetES2016,
 				},
-				FileNames: []string{"/app.ts"},
+				FileNames: []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",
@@ -1316,7 +1329,7 @@ func TestChainedMethodCalls(t *testing.T) {
 			&tsoptions.ParsedCommandLine{
 				ParsedConfig: &tsoptions.ParsedOptions{
 					CompilerOptions: compilerOptions,
-					FileNames:        []string{"/app.ts"},
+					FileNames:       []tspath.RootedFilePath{"/app.ts"},
 				},
 			}, "/", nil,
 		)
@@ -1607,7 +1620,7 @@ class App {
 				&tsoptions.ParsedCommandLine{
 					ParsedConfig: &tsoptions.ParsedOptions{
 						CompilerOptions: compilerOptions,
-						FileNames:       []string{"/app.ts"},
+						FileNames:       []tspath.RootedFilePath{"/app.ts"},
 					},
 				},
 				"/",
@@ -1664,7 +1677,7 @@ export function fnDecl(x: any): ICfg { return localCast<ICfg>(x); }`
 		&tsoptions.ParsedCommandLine{
 			ParsedConfig: &tsoptions.ParsedOptions{
 				CompilerOptions: compilerOptions,
-				FileNames:       []string{"/app.ts"},
+				FileNames:       []tspath.RootedFilePath{"/app.ts"},
 			},
 		},
 		"/",

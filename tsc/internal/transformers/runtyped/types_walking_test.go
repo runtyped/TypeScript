@@ -2,6 +2,7 @@ package runtyped_test
 
 import (
 	"testing"
+
 	"github.com/microsoft/TypeScript/tsc/internal/core"
 	"github.com/microsoft/TypeScript/tsc/internal/printer"
 	"github.com/microsoft/TypeScript/tsc/internal/testutil/emittestutil"
@@ -45,8 +46,8 @@ func TestReflectionTypeWalking(t *testing.T) {
 			output: "const __ΩFoo = [\"Foo\", \")w!y\"];\ntype Foo = boolean;",
 		},
 		{
-			title:  "LiteralString",
-			input:  "type Foo = \"hello\";",
+			title: "LiteralString",
+			input: "type Foo = \"hello\";",
 			output: `const __ΩFoo = ["hello", "Foo", ".!w\"y"];
 type Foo = "hello";`,
 		},

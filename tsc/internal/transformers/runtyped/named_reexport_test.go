@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	"github.com/microsoft/TypeScript/tsc/internal/core"
-	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
 	"github.com/microsoft/TypeScript/tsc/internal/testutil/harnessutil"
+	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
 
 // TestNamedReExportSpecs ports named-reexport.spec.ts (50 tests).
@@ -23,10 +24,10 @@ func TestNamedReExportSpecs(t *testing.T) {
 	transform := func(t *testing.T, files map[string]string) map[string]string {
 		t.Helper()
 		var inputFiles []*harnessutil.TestFile
-		var fileNames []string
+		var fileNames []tspath.RootedFilePath
 		for name, content := range files {
 			inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-			fileNames = append(fileNames, "/"+name)
+			fileNames = append(fileNames, tspath.RootedFilePathFromNormalized("/"+name))
 		}
 		result := harnessutil.CompileFiles(t,
 			inputFiles, nil, harnessutil.TestConfiguration{},
@@ -39,9 +40,9 @@ func TestNamedReExportSpecs(t *testing.T) {
 			"/", nil,
 		)
 		outputs := make(map[string]string)
-		result.JS.Entries()(func(key string, value *harnessutil.TestFile) bool {
+		result.JS.Entries()(func(key tspath.RootedFilePath, value *harnessutil.TestFile) bool {
 			// Strip leading / and trailing .js → .ts for lookup
-			k := strings.TrimPrefix(key, "/")
+			k := strings.TrimPrefix(key.AsString(), "/")
 			k = strings.TrimSuffix(k, ".js") + ".ts"
 			outputs[k] = value.Content
 			return true
@@ -55,23 +56,11 @@ func TestNamedReExportSpecs(t *testing.T) {
 		return transform(t, files)
 	}
 
-	assertContains := func(t *testing.T, output, expected string) {
-		t.Helper()
-		if !strings.Contains(output, expected) {
-			t.Errorf("expected output to contain %q\nOutput:\n%s", expected, output)
-		}
-	}
-	assertNotContains := func(t *testing.T, output, expected string) {
-		t.Helper()
-		if strings.Contains(output, expected) {
-			t.Errorf("expected output to NOT contain %q\nOutput:\n%s", expected, output)
-		}
-	}
-	assertContainsCount := func(t *testing.T, output, expected string, max int) {
+	assertContainsCount := func(t *testing.T, output, expected string, maxCount int) {
 		t.Helper()
 		count := strings.Count(output, expected)
-		if count > max {
-			t.Errorf("expected at most %d occurrences of %q, got %d\nOutput:\n%s", max, expected, count, output)
+		if count > maxCount {
+			t.Errorf("expected at most %d occurrences of %q, got %d\nOutput:\n%s", maxCount, expected, count, output)
 		}
 	}
 
@@ -135,8 +124,8 @@ export const MY_CONSTANT = 'constant';`,
 	t.Run("ReExportFromDTS", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":       `export { ExternalType } from './external';`,
-			"external.d.ts":  `export interface ExternalType { external: boolean; }
+			"index.ts": `export { ExternalType } from './external';`,
+			"external.d.ts": `export interface ExternalType { external: boolean; }
 export type __ΩExternalType = any[];`,
 		})
 		// Either the __Ω is re-exported or the type export remains
@@ -149,7 +138,7 @@ export type __ΩExternalType = any[];`,
 	t.Run("ReExportFromDTSWithExplicitOmega", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":      `export { ExternalType, __ΩExternalType } from './external';`,
+			"index.ts": `export { ExternalType, __ΩExternalType } from './external';`,
 			"external.d.ts": `export interface ExternalType { external: boolean; }
 export type __ΩExternalType = any[];`,
 		})
@@ -208,7 +197,7 @@ export type UserRole = 'admin' | 'user' | 'guest';`,
 	t.Run("DefaultAndNamedCombination", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":  `export { default as DefaultType, NamedType } from './module';`,
+			"index.ts": `export { default as DefaultType, NamedType } from './module';`,
 			"module.ts": `export default interface DefaultInterface { value: number; }
 export interface NamedType { name: string; }`,
 		})
@@ -219,7 +208,7 @@ export interface NamedType { name: string; }`,
 	t.Run("ReExportPreservesGenerics", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":      `export { Container } from './container';`,
+			"index.ts":     `export { Container } from './container';`,
 			"container.ts": `export interface Container<T> { value: T; getValue(): T; }`,
 		})
 		assertContains(t, res["container.ts"], "const __ΩContainer =")
@@ -241,7 +230,7 @@ export interface NamedType { name: string; }`,
 	t.Run("BarrelFilePattern", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":    `export { User } from './user';
+			"index.ts": `export { User } from './user';
 export { Post } from './post';
 export { Comment } from './comment';`,
 			"user.ts":    `export interface User { id: number; name: string; }`,
@@ -312,7 +301,7 @@ export const someValue = 'hello';`,
 	t.Run("ReExportWithLocalUsage", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":  `import { Config } from './config';
+			"index.ts": `import { Config } from './config';
 export { Config } from './config';
 
 function useConfig(config: Config) {
@@ -327,7 +316,7 @@ function useConfig(config: Config) {
 	t.Run("NamespaceReExport", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":     `export { MyNamespace } from './namespace';`,
+			"index.ts": `export { MyNamespace } from './namespace';`,
 			"namespace.ts": `export namespace MyNamespace {
     export interface Config { value: string; }
 }`,
@@ -343,7 +332,7 @@ function useConfig(config: Config) {
 	t.Run("TranspileBasicReExportChain", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":    `import { User } from './index';
+			"app.ts": `import { User } from './index';
 const user: User = { id: 1, name: 'Test' };
 user;`,
 			"index.ts": `export { User } from './user';`,
@@ -357,7 +346,7 @@ user;`,
 	t.Run("TranspileNamespaceStarReExport", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":   `import * as Types from './types';
+			"app.ts": `import * as Types from './types';
 const user: Types.User = { id: 1 };
 user;`,
 			"types.ts": `export interface User { id: number; }`,
@@ -369,12 +358,12 @@ user;`,
 	t.Run("TranspileDeepBarrelChain", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":          `import { DeepType } from './index';
+			"app.ts": `import { DeepType } from './index';
 const obj: DeepType = { level: 3, data: 'test' };
 obj;`,
-			"index.ts":        `export { DeepType } from './sub';`,
-			"sub/index.ts":    `export { DeepType } from './types';`,
-			"sub/types.ts":    `export interface DeepType { level: number; data: string; }`,
+			"index.ts":     `export { DeepType } from './sub';`,
+			"sub/index.ts": `export { DeepType } from './types';`,
+			"sub/types.ts": `export interface DeepType { level: number; data: string; }`,
 		})
 		assertContains(t, res["sub/types.ts"], "__ΩDeepType")
 		assertContains(t, res["sub/types.ts"], "exports.__ΩDeepType")
@@ -397,12 +386,12 @@ obj;`,
 	t.Run("TranspileMultipleReExportsFromDifferentModules", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":     `import { User, Post, Comment } from './index';
+			"app.ts": `import { User, Post, Comment } from './index';
 const u: User = { id: 1 };
 const p: Post = { title: 'test' };
 const c: Comment = { text: 'hello' };
 [u, p, c];`,
-			"index.ts":   `export { User } from './user';
+			"index.ts": `export { User } from './user';
 export { Post } from './post';
 export { Comment } from './comment';`,
 			"user.ts":    `export interface User { id: number; }`,
@@ -417,11 +406,11 @@ export { Comment } from './comment';`,
 	t.Run("TranspileClassWithReExport", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":      `import { MyService } from './index';
+			"app.ts": `import { MyService } from './index';
 const svc = new MyService();
 svc;`,
-			"index.ts":    `export { MyService } from './service';`,
-			"service.ts":  `export class MyService { id: number = 0; name: string = ''; }`,
+			"index.ts":   `export { MyService } from './service';`,
+			"service.ts": `export class MyService { id: number = 0; name: string = ''; }`,
 		})
 		assertContains(t, res["service.ts"], "__type")
 	})
@@ -429,11 +418,11 @@ svc;`,
 	t.Run("TranspileGenericInterfaceReExport", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":         `import { Container } from './index';
+			"app.ts": `import { Container } from './index';
 const box: Container<string> = { value: 'hello', getValue: () => 'hello' };
 box;`,
-			"index.ts":       `export { Container } from './container';`,
-			"container.ts":   `export interface Container<T> { value: T; getValue(): T; }`,
+			"index.ts":     `export { Container } from './container';`,
+			"container.ts": `export interface Container<T> { value: T; getValue(): T; }`,
 		})
 		assertContains(t, res["container.ts"], "__ΩContainer")
 		assertContains(t, res["container.ts"], "exports.__ΩContainer")
@@ -442,7 +431,7 @@ box;`,
 	t.Run("TranspileEnumReExportWithValues", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":    `import { Status } from './index';
+			"app.ts": `import { Status } from './index';
 const s: Status = Status.Active;
 s;`,
 			"index.ts": `export { Status } from './enums';`,
@@ -457,7 +446,7 @@ s;`,
 	t.Run("TranspileBrandedTypeReExport", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":    `import { UserID } from './index';
+			"app.ts": `import { UserID } from './index';
 const id: UserID = 'user-123' as UserID;
 id;`,
 			"index.ts": `export { UserID } from './types';`,
@@ -470,17 +459,17 @@ id;`,
 	t.Run("TranspileMixedExportsFromBarrel", func(t *testing.T) {
 		t.Parallel()
 		res := transpileCheck(t, map[string]string{
-			"app.ts":      `import { User, UserService, createUser } from './index';
+			"app.ts": `import { User, UserService, createUser } from './index';
 const user: User = { id: 1, name: 'Test' };
 const service = new UserService();
 const newUser = createUser('New User');
 [user, service, newUser];`,
-			"index.ts":    `export { User } from './types';
+			"index.ts": `export { User } from './types';
 export { UserService } from './service';
 export { createUser } from './factory';`,
-			"types.ts":    `export interface User { id: number; name: string; }`,
-			"service.ts":  `export class UserService { getUsers(): any[] { return []; } }`,
-			"factory.ts":  `export function createUser(name: string): any { return { id: Date.now(), name }; }`,
+			"types.ts":   `export interface User { id: number; name: string; }`,
+			"service.ts": `export class UserService { getUsers(): any[] { return []; } }`,
+			"factory.ts": `export function createUser(name: string): any { return { id: Date.now(), name }; }`,
 		})
 		assertContains(t, res["types.ts"], "__ΩUser")
 		assertContains(t, res["types.ts"], "exports.__ΩUser")
@@ -521,12 +510,12 @@ export enum Status { Active, Inactive }`,
 	t.Run("DocumentClassReExportThroughTypeSystem", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"app.ts":    `import { Cache } from './module';
+			"app.ts": `import { Cache } from './module';
 typeOf<Cache>();`,
 			"module.ts": `import { Cache } from './class';
 
 export { Cache }`,
-			"class.ts":  `export class Cache {}`,
+			"class.ts": `export class Cache {}`,
 		})
 		// The compiler follows the import chain to find the class
 		// In CommonJS, the reference is module_1.Cache or module_2.Cache
@@ -580,7 +569,7 @@ export type ID = number;`,
 	t.Run("ExportWithExplicitJSExtension", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":   `export { Config } from './config.js';`,
+			"index.ts":  `export { Config } from './config.js';`,
 			"config.ts": `export interface Config { setting: string; value: number; }`,
 		})
 		assertContains(t, res["config.ts"], "const __ΩConfig =")
@@ -606,7 +595,7 @@ export type ID = number;`,
 	t.Run("InlineTypeModifier", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":  `export { type TypeOnly, RegularExport } from './module';`,
+			"index.ts": `export { type TypeOnly, RegularExport } from './module';`,
 			"module.ts": `export interface TypeOnly { readonly value: string; }
 export interface RegularExport { data: number; }`,
 		})
@@ -619,7 +608,7 @@ export interface RegularExport { data: number; }`,
 	t.Run("MixedDefaultAndNamedInSameStatement", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":  `export { default as DefaultExport, NamedType } from './module';`,
+			"index.ts": `export { default as DefaultExport, NamedType } from './module';`,
 			"module.ts": `export default interface DefaultInterface { defaultValue: boolean; }
 export interface NamedType { namedValue: string; }`,
 		})
@@ -685,7 +674,7 @@ export interface TypeB { ref: TypeA; }`,
 	t.Run("ReExportGenericTypeWithConstraints", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":       `export { Repository } from './repository';`,
+			"index.ts": `export { Repository } from './repository';`,
 			"repository.ts": `export interface Entity { id: number; }
 export interface Repository<T extends Entity> { find(id: number): T | undefined; save(entity: T): void; }`,
 		})
@@ -733,8 +722,8 @@ export type MergedType = A & B;`,
 	t.Run("VerifyReExportAsSeparateStatement", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":    `export { Context } from './context';`,
-			"context.ts":  `export interface Context { id: number; }`,
+			"index.ts":   `export { Context } from './context';`,
+			"context.ts": `export interface Context { id: number; }`,
 		})
 		// CommonJS: the __Ω re-export is added as a separate Object.defineProperty
 		assertContains(t, res["index.ts"], `require("./context")`)
@@ -744,13 +733,12 @@ export type MergedType = A & B;`,
 	t.Run("VerifyReExportWithAliasFormat", func(t *testing.T) {
 		t.Parallel()
 		res := transform(t, map[string]string{
-			"index.ts":    `export { Context as Ctx } from './context';`,
-			"context.ts":  `export interface Context { id: number; }`,
+			"index.ts":   `export { Context as Ctx } from './context';`,
+			"context.ts": `export interface Context { id: number; }`,
 		})
 		// CommonJS: the aliased __Ω re-export uses Object.defineProperty with getter
 		assertContains(t, res["index.ts"], `require("./context")`)
 		assertContains(t, res["index.ts"], "__ΩCtx")
 		assertContains(t, res["index.ts"], "__ΩContext")
 	})
-
 }

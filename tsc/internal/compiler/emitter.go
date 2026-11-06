@@ -103,7 +103,9 @@ func (e *emitter) runDeclarationTransformers(emitResolver printer.EmitResolver, 
 		diags = append(diags, transformer.GetDiagnostics()...)
 	}
 	// Runtyped declaration transformer — appends __Ω type aliases to .d.ts output
-	sourceFile = runtyped.NewDeclarationTransformer(emitContext).TransformSourceFile(sourceFile)
+	if runtyped.Enabled() {
+		sourceFile = runtyped.NewDeclarationTransformer(emitResolver.EmitContext()).TransformSourceFile(sourceFile)
+	}
 	return sourceFile, diags
 }
 
@@ -161,7 +163,9 @@ func getScriptTransformers(emitResolver printer.EmitResolver, host printer.EmitH
 
 	// Runtyped reflection transformer — must run BEFORE type erasure
 	// so it can see type annotations while they still exist in the AST
-	tx = append(tx, runtyped.NewReflectionTransformer(&opts))
+	if runtyped.Enabled() {
+		tx = append(tx, runtyped.NewReflectionTransformer(&opts))
+	}
 
 	// transform TypeScript syntax
 	{

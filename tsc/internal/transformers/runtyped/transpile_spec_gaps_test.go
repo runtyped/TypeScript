@@ -7,6 +7,7 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/core"
 	"github.com/microsoft/TypeScript/tsc/internal/testutil/harnessutil"
 	"github.com/microsoft/TypeScript/tsc/internal/tsoptions"
+	"github.com/microsoft/TypeScript/tsc/internal/tspath"
 )
 
 // TestTranspileSpecGaps fills in the remaining transpile.spec.ts tests
@@ -28,7 +29,7 @@ func TestTranspileSpecGaps(t *testing.T) {
 						ModuleResolution: core.ModuleResolutionKindNode10,
 						Target:           target,
 					},
-					FileNames: []string{"/app.ts"},
+					FileNames: []tspath.RootedFilePath{"/app.ts"},
 				},
 			}, "/", nil,
 		)
@@ -37,13 +38,6 @@ func TestTranspileSpecGaps(t *testing.T) {
 			t.Fatal("no app.js output")
 		}
 		return appJS.Content
-	}
-
-	assertContains := func(t *testing.T, output, expected string) {
-		t.Helper()
-		if !strings.Contains(output, expected) {
-			t.Errorf("expected output to contain %q\nOutput:\n%s", expected, output)
-		}
 	}
 
 	// "use global types with esnext target" — globals work with ESNext target
@@ -86,15 +80,15 @@ getType<string>();`, core.ScriptTargetES2016)
 	t.Run("ResolveImportTSPattern", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
-			"app.ts":    `import { Logger } from './logger';
+			"app.ts": `import { Logger } from './logger';
 function fn(logger: Logger) {}`,
 			"logger.ts": `export class Logger {}`,
 		}
 		var inputFiles []*harnessutil.TestFile
-		var fileNames []string
+		var fileNames []tspath.RootedFilePath
 		for name, content := range files {
 			inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-			fileNames = append(fileNames, "/"+name)
+			fileNames = append(fileNames, tspath.RootedFilePathFromNormalized("/"+name))
 		}
 		result := harnessutil.CompileFiles(t,
 			inputFiles, nil, harnessutil.TestConfiguration{},
@@ -128,15 +122,15 @@ function fn(logger: Logger) {}`,
 	t.Run("ResolveImportDTSPattern", func(t *testing.T) {
 		t.Parallel()
 		files := map[string]string{
-			"app.ts":        `import { Logger } from './logger';
+			"app.ts": `import { Logger } from './logger';
 function fn(logger: Logger) {}`,
-			"logger.d.ts":   `export declare class Logger {}`,
+			"logger.d.ts": `export declare class Logger {}`,
 		}
 		var inputFiles []*harnessutil.TestFile
-		var fileNames []string
+		var fileNames []tspath.RootedFilePath
 		for name, content := range files {
 			inputFiles = append(inputFiles, &harnessutil.TestFile{UnitName: name, Content: content})
-			fileNames = append(fileNames, "/"+name)
+			fileNames = append(fileNames, tspath.RootedFilePathFromNormalized("/"+name))
 		}
 		result := harnessutil.CompileFiles(t,
 			inputFiles, nil, harnessutil.TestConfiguration{},

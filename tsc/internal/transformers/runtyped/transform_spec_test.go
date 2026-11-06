@@ -130,7 +130,9 @@ function fn(logger: Logger) {}`)
 // These tests verify Ω reset and parameter default injection.
 
 func TestReceiveTypeSingleFile(t *testing.T) {
+	t.Parallel()
 	t.Run("FunctionDeclarationReceivesOmegaReset", func(t *testing.T) {
+		t.Parallel()
 		// function getType<T>(type?: ReceiveType<T>) {}
 		// → body starts with getType.Ω = undefined
 		output := transformEmit(t, `function getType<T>(type?: ReceiveType<T>) {
@@ -141,6 +143,7 @@ func TestReceiveTypeSingleFile(t *testing.T) {
 	})
 
 	t.Run("FunctionDeclarationParameterDefault", func(t *testing.T) {
+		t.Parallel()
 		// The ReceiveType<T> parameter should get a default value of getType.Ω
 		output := transformEmit(t, `function getType<T>(type?: ReceiveType<T>) {
             return type;
@@ -151,6 +154,7 @@ func TestReceiveTypeSingleFile(t *testing.T) {
 	})
 
 	t.Run("PassTypeArgumentArrowFunction", func(t *testing.T) {
+		t.Parallel()
 		// (<T>(type?: ReceiveType<T>) => {})<string>();
 		// Arrow functions in inline expressions are excluded from type passing
 		output := transformEmit(t, `(<T>(type?: ReceiveType<T>) => {})<string>();`)
@@ -160,6 +164,7 @@ func TestReceiveTypeSingleFile(t *testing.T) {
 	})
 
 	t.Run("OmegaSideChannelFallback", func(t *testing.T) {
+		t.Parallel()
 		// Without binder, resolveValueDeclaration can't find the function,
 		// so it falls back to the Ω side-channel: (fn.Ω = [type], fn<string>())
 		output := transformEmit(t, `function getType<T>(type?: ReceiveType<T>) {
@@ -175,12 +180,15 @@ func TestReceiveTypeSingleFile(t *testing.T) {
 // ─── Declare statement filtering tests ───
 
 func TestDeclareFiltering(t *testing.T) {
+	t.Parallel()
 	t.Run("DeclareTypeNoOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type DeclaredType = string;`)
 		assertNotContains(t, output, "__ΩDeclaredType")
 	})
 
 	t.Run("DeclareInterfaceNoOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare interface DeclaredInterface {
     id: number;
     name: string;
@@ -189,6 +197,7 @@ func TestDeclareFiltering(t *testing.T) {
 	})
 
 	t.Run("DeclareEnumNoOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare enum DeclaredEnum {
     A, B, C
 }`)
@@ -196,11 +205,13 @@ func TestDeclareFiltering(t *testing.T) {
 	})
 
 	t.Run("RegularTypeAliasGeneratesOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `type RegularType = string;`)
 		assertContains(t, output, "__ΩRegularType")
 	})
 
 	t.Run("RegularInterfaceGeneratesOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `interface RegularInterface {
     id: number;
 }`)
@@ -208,6 +219,7 @@ func TestDeclareFiltering(t *testing.T) {
 	})
 
 	t.Run("RegularEnumGeneratesOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `enum RegularEnum {
     A, B, C
 }`)
@@ -218,7 +230,9 @@ func TestDeclareFiltering(t *testing.T) {
 // ─── Extended declare filtering tests ───
 
 func TestDeclareFilteringExtended(t *testing.T) {
+	t.Parallel()
 	t.Run("TypeReferencingDeclareType", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type ExternalConfig = {
     host: string;
     port: number;
@@ -233,6 +247,7 @@ type AppConfig = ExternalConfig & {
 	})
 
 	t.Run("InterfaceExtendingDeclareInterface", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare interface BaseInterface {
     id: string;
 }
@@ -246,6 +261,7 @@ interface ExtendedInterface extends BaseInterface {
 	})
 
 	t.Run("DeclareConstTypeof", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare const DECLARED_CONST: string;
 
 type MyType = typeof DECLARED_CONST;`)
@@ -254,6 +270,7 @@ type MyType = typeof DECLARED_CONST;`)
 	})
 
 	t.Run("MixDeclareAndNonDeclare", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type DeclaredType = string;
 type RegularType = number;`)
 
@@ -262,11 +279,13 @@ type RegularType = number;`)
 	})
 
 	t.Run("ExportDeclareTypeNoOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `export declare type DeclaredType = string;`)
 		assertNotContains(t, output, "__ΩDeclaredType")
 	})
 
 	t.Run("ExportDeclareInterfaceNoOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `export declare interface DeclaredInterface {
     id: number;
 }`)
@@ -276,6 +295,7 @@ type RegularType = number;`)
 	// ── Port of declare-statement-filtering.spec.ts (remaining cases) ──
 
 	t.Run("ExportDeclareEnumNoOmega", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `export declare enum DeclaredEnum {
     A,
     B
@@ -284,12 +304,14 @@ type RegularType = number;`)
 	})
 
 	t.Run("ExportedRegularTypeGeneratesExport", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `export type RegularType = string;`)
 		assertContains(t, output, "__ΩRegularType")
 		assertContains(t, output, "export")
 	})
 
 	t.Run("ExportedRegularInterfaceGeneratesExport", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `export interface RegularInterface {
     id: number;
 }`)
@@ -297,6 +319,7 @@ type RegularType = number;`)
 	})
 
 	t.Run("ExportedRegularEnumGeneratesExport", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `export enum RegularEnum {
     A,
     B
@@ -305,6 +328,7 @@ type RegularType = number;`)
 	})
 
 	t.Run("DeclareClassAndRegularClassBothGetReflection", func(t *testing.T) {
+		t.Parallel()
 		// Note: unlike declare type/interface/enum, declare class currently still
 		// gets reflection in the transform output. Documents current behavior.
 		output := transformEmit(t, `declare class DeclaredClass {
@@ -322,6 +346,7 @@ class RegularClass {
 	})
 
 	t.Run("DeclareFunctionAndRegularFunctionBothGetReflection", func(t *testing.T) {
+		t.Parallel()
 		// Note: unlike declare type/interface/enum, declare function currently still
 		// gets reflection in the transform output. Documents current behavior.
 		output := transformEmit(t, `declare function declaredFunction(x: number): string;
@@ -334,6 +359,7 @@ function regularFunction(x: number): string {
 	})
 
 	t.Run("GenericTypeWithDeclareTypeConstraint", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type Identifiable = { id: string };
 
 type WithTimestamp<T extends Identifiable> = T & { timestamp: Date };`)
@@ -343,6 +369,7 @@ type WithTimestamp<T extends Identifiable> = T & { timestamp: Date };`)
 	})
 
 	t.Run("DeclareWithTypeParameters", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type GenericDeclare<T> = { value: T };
 
 type ConcreteType = GenericDeclare<string>;`)
@@ -352,6 +379,7 @@ type ConcreteType = GenericDeclare<string>;`)
 	})
 
 	t.Run("DeclareInterfaceWithMethodSignatures", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare interface ServiceInterface {
     getData(): Promise<string>;
     setData(value: string): void;
@@ -366,6 +394,7 @@ interface MyService extends ServiceInterface {
 	})
 
 	t.Run("DeclareEnumUsedInRegularType", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare enum ExternalStatus {
     Active,
     Inactive
@@ -380,6 +409,7 @@ type StatusWrapper = {
 	})
 
 	t.Run("MultipleDeclareStatementsInSequence", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type A = string;
 declare type B = number;
 declare type C = boolean;
@@ -396,6 +426,7 @@ declare enum F { X, Y }`)
 	})
 
 	t.Run("DeclareStatementsWithJSDocComments", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `/**
  * This is a declared type with documentation
  * @description Some description
@@ -412,6 +443,7 @@ type DocumentedRegular = number;`)
 	})
 
 	t.Run("UnionTypeCombiningDeclaredAndRegular", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type ExternalType = { external: true };
 type InternalType = { internal: true };
 
@@ -423,6 +455,7 @@ type UnionType = ExternalType | InternalType;`)
 	})
 
 	t.Run("IntersectionTypeCombiningDeclaredAndRegular", func(t *testing.T) {
+		t.Parallel()
 		output := transformEmit(t, `declare type ExternalMixin = { external: true };
 type InternalMixin = { internal: true };
 

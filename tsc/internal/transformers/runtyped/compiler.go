@@ -1118,7 +1118,8 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 			qn := typeName.AsQualifiedName()
 			if qn.Left.Kind == ast.KindIdentifier {
 				enumResolved := tc.resolveDeclaration(qn.Left)
-				if enumResolved != nil && enumResolved.declaration.Kind == ast.KindEnumDeclaration {
+				// declaration is nil when the left side is an unresolvable import.
+				if enumResolved != nil && enumResolved.declaration != nil && enumResolved.declaration.Kind == ast.KindEnumDeclaration {
 					// Handle enum member resolution
 					tc.resolveEnumMember(enumResolved.declaration, qn.Right, program)
 					return

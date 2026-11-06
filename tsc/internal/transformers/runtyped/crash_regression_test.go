@@ -113,3 +113,41 @@ export { value as "my value" } from "./types";
 		t.Fatalf("expected the string-literal re-export to be preserved, got:\n%s", appJS)
 	}
 }
+
+// TestQualifiedTypeNameOnDefaultImport covers a qualified type reference whose
+// left side is a default import (`ajvModule.Ajv`), which used to crash.
+func TestQualifiedTypeNameOnDefaultImport(t *testing.T) {
+	t.Parallel()
+	const app = `
+import ajvModule from 'ajv';
+
+export const errorsToString = (ajv: ajvModule.Ajv): string => {
+  return ajv.errors?.map(e => e.message).join(', ') || '';
+};
+`
+	t.Run("unresolved module", func(t *testing.T) {
+		t.Parallel()
+		outputs := compileFilesJS(t, map[string]string{"/app.ts": app})
+		if !strings.Contains(outputs["/app.js"], "errorsToString") {
+			t.Fatalf("expected errorsToString in output, got:\n%s", outputs["/app.js"])
+		}
+	})
+	t.Run("resolved module", func(t *testing.T) {
+		t.Parallel()
+		outputs := compileFilesJS(t, map[string]string{
+			"/app.ts":                        app,
+			"/node_modules/ajv/package.json": `{ "name": "ajv", "types": "index.d.ts" }`,
+			"/node_modules/ajv/index.d.ts": `
+declare var ajv: { (): ajv.Ajv };
+declare namespace ajv {
+  interface ErrorObject { message?: string }
+  interface Ajv { errors?: Array<ErrorObject> | null }
+}
+export = ajv;
+`,
+		})
+		if !strings.Contains(outputs["/app.js"], "errorsToString") {
+			t.Fatalf("expected errorsToString in output, got:\n%s", outputs["/app.js"])
+		}
+	})
+}

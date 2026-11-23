@@ -214,6 +214,20 @@ export type TypeAnnotation<T extends string, Options = never> = unknown;
 			contains: []string{`["a", "get", "R", "P&2!$0\"5w#"]`},
 		},
 		{
+			name: "ReceiveTypeArrowInObjectLiteral",
+			files: map[string]string{"app.ts": `type ReceiveType<T> = { __meta?: T };
+const obj = {
+    cast: <T>(type?: ReceiveType<T>) => {},
+    nested: { deep: <T>(type?: ReceiveType<T>) => {} },
+};
+export const x = obj;
+`},
+			contains: []string{
+				"(type = obj.cast.Ω) => { obj.cast.Ω = undefined; }",
+				"(type = obj.nested.deep.Ω) => { obj.nested.deep.Ω = undefined; }",
+			},
+		},
+		{
 			name:     "PropertyDefaultsKeepCallSiteTypes",
 			files:    map[string]string{"app.ts": "export class M { m = new Map<string, number>(); }\n"},
 			contains: []string{`["m", function () { return (Map.Ω = [["&"], ["'"]], new Map()); }, "M", "!3!>\"5w#"]`},

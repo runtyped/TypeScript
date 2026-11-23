@@ -751,16 +751,10 @@ func (tx *reflectionTransformer) injectResetOmega(node *ast.Node) *ast.Node {
 
 	switch node.Kind {
 	case ast.KindArrowFunction:
-		// For arrow functions, the container comes from the parent variable declaration
-		// e.g. const fn = <T>(type: ReceiveType<T>) => {} → fn.Ω = undefined
-		// If parent is not a VariableDeclaration, we can't set Ω
-		parent := tx.parseTreeParent(node)
-		if parent != nil && parent.Kind == ast.KindVariableDeclaration {
-			varDecl := parent.AsVariableDeclaration()
-			if varDecl.Name() != nil && varDecl.Name().Kind == ast.KindIdentifier {
-				container = factory.NewIdentifier(varDecl.Name().AsIdentifier().Text)
-			}
-		}
+		// For arrow functions, the container is the name the arrow is assigned
+		// to, e.g. const fn = <T>(type: ReceiveType<T>) => {} → fn.Ω = undefined.
+		// Without one, Ω can't be set.
+		container = tx.arrowOmegaContainer(node)
 		if container == nil {
 			return node
 		}
@@ -861,6 +855,69 @@ func getFunctionLikeName(node *ast.Node) *ast.Node {
 	return nil
 }
 
+// arrowOmegaContainer returns the expression an arrow function is reachable
+// through, which holds its Ω: the variable it is assigned to (`fn` for
+// `const fn = () => {}`), or the property path to it within object literals
+// (`obj.a.cast` for `const obj = {a: {cast: () => {}}}`). It returns nil when
+// there is none. Port of compiler.ts's getArrowFunctionΩPropertyAccessIdentifier.
+func (tx *reflectionTransformer) arrowOmegaContainer(arrow *ast.Node) *ast.Node {
+	identifierName := func(node *ast.Node) (string, bool) {
+		if name := node.Name(); name != nil && name.Kind == ast.KindIdentifier {
+			return name.AsIdentifier().Text, true
+		}
+		return "", false
+	}
+	parent := tx.parseTreeParent(arrow)
+	if parent == nil {
+		return nil
+	}
+	switch parent.Kind {
+	case ast.KindVariableDeclaration:
+		if name, ok := identifierName(parent); ok {
+			return tx.Factory().NewIdentifier(name)
+		}
+		return nil
+	case ast.KindPropertyAssignment:
+		if _, ok := identifierName(parent); !ok {
+			return nil
+		}
+	default:
+		return nil
+	}
+	var names []string
+	for current := parent; current != nil; {
+		switch current.Kind {
+		case ast.KindObjectLiteralExpression:
+			current = tx.parseTreeParent(current)
+			continue
+		case ast.KindVariableDeclaration:
+			name, ok := identifierName(current)
+			if !ok {
+				return nil
+			}
+			names = append([]string{name}, names...)
+		default:
+			name, ok := identifierName(current)
+			if !ok {
+				return nil
+			}
+			names = append([]string{name}, names...)
+			current = tx.parseTreeParent(current)
+			continue
+		}
+		break
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	factory := tx.Factory()
+	container := factory.NewIdentifier(names[0])
+	for _, name := range names[1:] {
+		container = factory.NewPropertyAccessExpression(container, nil, factory.NewIdentifier(name), 0)
+	}
+	return container
+}
+
 // visitParameterDeclaration handles ReceiveType<T> parameters by adding a default
 // value that reads from the function's Ω property.
 func (tx *reflectionTransformer) visitParameterDeclaration(node *ast.ParameterDeclaration) *ast.Node {
@@ -933,13 +990,8 @@ func (tx *reflectionTransformer) visitParameterDeclaration(node *ast.ParameterDe
 
 	switch parent.Kind {
 	case ast.KindArrowFunction:
-		// Arrow function: container is the variable name from parent declaration
-		varDecl := tx.parseTreeParent(parent)
-		if varDecl != nil && varDecl.Kind == ast.KindVariableDeclaration {
-			if varDecl.AsVariableDeclaration().Name() != nil && varDecl.AsVariableDeclaration().Name().Kind == ast.KindIdentifier {
-				container = factory.NewIdentifier(varDecl.AsVariableDeclaration().Name().AsIdentifier().Text)
-			}
-		}
+		// Arrow function: container is the name the arrow is assigned to.
+		container = tx.arrowOmegaContainer(parent)
 		if container == nil {
 			return visited.AsNode()
 		}

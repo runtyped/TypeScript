@@ -79,6 +79,22 @@ Without it, each file uses the nearest `tsconfig.json` above it.
 
 This package is the compile-time counterpart to [@runtyped/type].
 
+## Migrating from @runtyped/type-compiler
+
+`@runtyped/typescript` supersedes [@runtyped/type-compiler], the JavaScript
+transformer that patched the official `typescript` package up to the 6.x
+series. Both [@runtyped/type-compiler] and support for TypeScript 6.x are
+**deprecated** as of Runtyped 3.0.0: [@runtyped/type] 3.x requires this
+compiler, while projects that must stay on TypeScript 6.x can keep using
+[@runtyped/type-compiler] 2.x with [@runtyped/type] 2.x.
+
+To migrate, replace `typescript` and `@runtyped/type-compiler` with
+`@runtyped/typescript` and drop any call to `runtyped-install-transformer`.
+Note that a `tsconfig.json` without a `reflection` field reflected nothing
+with [@runtyped/type-compiler] but reflects every file with this compiler;
+set `"reflection": false` to keep the old behaviour. See the
+[Runtyped changelog] for the full migration notes.
+
 ## Binaries
 
 Starting with version 7.0, the TypeScript compiler has been ported to [Go].
@@ -96,8 +112,13 @@ A small JavaScript wrapper selects the right binary at run time.
 ## Versioning
 
 Versioning of `@runtyped/typescript` is aligned to the reflection format it
-emits rather than to upstream TypeScript. The version of the upstream compiler
-it builds upon is tracked in the `runtyped.typescript` field of `package.json`.
+emits rather than to upstream TypeScript: any version of [@runtyped/type] with
+the same major version can read its output.
+
+The upstream compiler it builds upon is tracked in the `runtyped.typescript`
+field of `package.json`: `version` is the upstream release line, while
+`commit` and `date` identify the commit of [microsoft/TypeScript]'s `main`
+branch that this release is based on.
 
 For the full scheme, see the [Runtyped versioning strategy].
 
@@ -121,6 +142,9 @@ APACHE-2.0, just like the official [typescript] package.
 [DeepKit]: https://github.com/deepkit/deepkit
 [Runtyped]: https://github.com/runtyped/runtyped
 [typescript]: https://www.npmjs.com/package/typescript
+[microsoft/TypeScript]: https://github.com/microsoft/TypeScript
 [@runtyped/type]: https://www.npmjs.com/package/@runtyped/type
 [Relationship to DeepKit]: https://github.com/runtyped/runtyped#relationship-to-deepkit
 [Runtyped versioning strategy]: https://github.com/runtyped/runtyped#versioning
+[Runtyped changelog]: https://github.com/runtyped/runtyped/blob/main/CHANGELOG.md
+[@runtyped/type-compiler]: https://www.npmjs.com/package/@runtyped/type-compiler

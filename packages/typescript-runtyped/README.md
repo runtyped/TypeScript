@@ -102,5 +102,33 @@ In CI, publish from the assemble stage with `NPM_TOKEN` provided instead.
 
 ## Releasing
 
-1. Bump `version` in `packages/typescript-runtyped/npm/package.json` to upstream version.
-2. Rebuild the image, verify, publish.
+1. Bump `version` in `packages/typescript-runtyped/npm/package.json`
+   following the [Runtyped versioning strategy]: the major is shared with
+   `@runtyped/type` (3.x as of this writing), minors carry format-compatible
+   changes and patches carry fixes and upstream rebases.
+2. Update the `runtyped.typescript` field in the same `package.json` to
+   describe the upstream code the release is based on:
+   - `version`: the upstream release line (`7.1` for the `7.1.0-dev` that
+     `tsc --version` prints; see `tsc/internal/core/version.go`);
+   - `commit` and `date`: the most recent upstream commit included, i.e. the
+     merge base between the release commit and upstream `main` (mirrored by
+     this repository's `main` branch), and its commit date:
+
+     ```sh
+     git fetch origin main
+     git log -1 --format='%H %cI' "$(git merge-base HEAD origin/main)"
+     ```
+
+   Upstream's `main` only declares a `-dev` version in `version.go`; its
+   prerelease builds get their full version stamped in at publish time, and
+   this package's build keeps the `-dev` one. The commit and date are what
+   pin down the upstream code a release contains.
+3. Keep the `@runtyped/type` peer dependency on the same major.
+4. Rebuild the image, verify, publish.
+
+The reflection bytecode emitted by `tsc/internal/transformers/runtyped/ops.go`
+must stay in sync with `src/type-spec/type.ts` in [runtyped/runtyped], which
+is the source of truth for the op codes.
+
+[Runtyped versioning strategy]: https://github.com/runtyped/runtyped#versioning
+[runtyped/runtyped]: https://github.com/runtyped/runtyped

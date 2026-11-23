@@ -98,15 +98,29 @@ func (e *emitter) runDeclarationTransformers(emitResolver printer.EmitResolver, 
 		defer e.tr.Push(tracing.PhaseEmit, "transformNodes", map[string]any{"path": string(sourceFile.PathKey())}, false)()
 	}
 	var diags []*ast.Diagnostic
+	original := sourceFile // runtyped: reflection mode is resolved from the original source file
 	for _, transformer := range e.getDeclarationTransformers(emitResolver, sourceFile, declarationFilePath) {
 		sourceFile = transformer.TransformSourceFile(sourceFile)
 		diags = append(diags, transformer.GetDiagnostics()...)
 	}
 	// Runtyped declaration transformer — appends __Ω type aliases to .d.ts output
 	if runtyped.Enabled() {
-		sourceFile = runtyped.NewDeclarationTransformer(emitResolver.EmitContext()).TransformSourceFile(sourceFile)
+		sourceFile = runtyped.NewDeclarationTransformer(emitResolver.EmitContext()).
+			ForSourceFile(runtypedReflectionConfig(e.host), original).
+			TransformSourceFile(sourceFile)
 	}
 	return sourceFile, diags
+}
+
+// runtypedReflectionConfig reads tsconfig.json "reflection" settings through
+// the program's file system (runtyped).
+func runtypedReflectionConfig(host printer.EmitHost) *runtyped.ReflectionConfig {
+	// Single-file transpilation (SkipModuleResolution) has no project, and its
+	// file system rejects lookups outside the input file: reflect everything.
+	if h, ok := host.(*emitHost); ok && !h.program.opts.SkipModuleResolution {
+		return runtyped.NewReflectionConfig(h.program.Host().FS(), h.Options())
+	}
+	return nil
 }
 
 func getModuleTransformer(opts *transformers.TransformOptions) *transformers.Transformer {
@@ -164,7 +178,7 @@ func getScriptTransformers(emitResolver printer.EmitResolver, host printer.EmitH
 	// Runtyped reflection transformer — must run BEFORE type erasure
 	// so it can see type annotations while they still exist in the AST
 	if runtyped.Enabled() {
-		tx = append(tx, runtyped.NewReflectionTransformer(&opts))
+		tx = append(tx, runtyped.NewReflectionTransformerWithConfig(&opts, runtypedReflectionConfig(host)))
 	}
 
 	// transform TypeScript syntax

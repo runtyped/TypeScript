@@ -13,17 +13,28 @@ import (
 // NewReflectionTransformer creates a transformer that adds runtime type
 // information (__type and __Ω) to classes, type aliases, and imports,
 // before type annotations are erased.
+//
+// Every file is reflected in "default" mode unless opt.ReflectionMode (or
+// SetReflectionModeOverride) says otherwise. Use
+// NewReflectionTransformerWithConfig to honour tsconfig.json instead.
 func NewReflectionTransformer(opt *transformers.TransformOptions) *transformers.Transformer {
-	mode := opt.ReflectionMode
-	if mode == "" {
-		mode = GetReflectionModeOverride()
+	return NewReflectionTransformerWithConfig(opt, nil)
+}
+
+// NewReflectionTransformerWithConfig is NewReflectionTransformer with the
+// reflection mode of each file taken from rc (see ReflectionConfig). An
+// explicit opt.ReflectionMode or SetReflectionModeOverride still wins.
+func NewReflectionTransformerWithConfig(opt *transformers.TransformOptions, rc *ReflectionConfig) *transformers.Transformer {
+	override := opt.ReflectionMode
+	if override == "" {
+		override = GetReflectionModeOverride()
 	}
 	tx := &reflectionTransformer{
 		compilerOptions: opt.CompilerOptions,
 		emitContext:     opt.Context,
 		emitResolver:    opt.EmitResolver,
 		sourceFiles:     opt.SourceFiles,
-		reflectionMode:  mode,
+		modes:           fileModes{override: override, config: rc},
 	}
 	return tx.NewTransformer(tx.visit, opt.Context)
 }
@@ -54,8 +65,12 @@ type reflectionTransformer struct {
 	emitResolver    printer.EmitResolver
 	sourceFiles     func() []*ast.SourceFile
 
-	// Reflection mode: "default" (all types reflected), "never" (no reflection),
-	// "explicit" (only @reflection-decorated nodes). Empty = "default".
+	// modes resolves the reflection mode of any source file.
+	modes fileModes
+
+	// Reflection mode of the file being transformed: "default" (all types
+	// reflected), "never" (no reflection), "explicit" (only
+	// @reflection-decorated nodes). Empty = "default".
 	reflectionMode string
 
 	// Per-file state
@@ -152,6 +167,7 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 	}
 
 	// If reflection mode is "never", skip transformation entirely
+	tx.reflectionMode = tx.modes.modeFor(node)
 	if tx.reflectionMode == "never" {
 		return node.AsNode()
 	}
@@ -165,6 +181,7 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 	tx.sourceFile = node
 	tx.tc = newTypeCompiler(tx.EmitContext(), tx.emitResolver, tx.sourceFiles)
 	tx.tc.sourceFile = node
+	tx.tc.modes = tx.modes
 
 	// Visit all children (which collects omegaStatements, additionalImports, etc.)
 	visited := tx.Visitor().VisitEachChild(node.AsNode()).AsSourceFile()
@@ -318,14 +335,14 @@ func (tx *reflectionTransformer) processDeclarations() {
 // - "explicit": only declarations with @reflection JSDoc tag are reflected
 func (tx *reflectionTransformer) shouldReflect(node *ast.Node) bool {
 	if tx.reflectionMode == "explicit" {
-		return tx.hasReflectionJSDoc(node)
+		return hasReflectionJSDoc(tx.sourceFile, node)
 	}
 	return true
 }
 
-// hasReflectionJSDoc checks if a node has a @reflection JSDoc tag.
-func (tx *reflectionTransformer) hasReflectionJSDoc(node *ast.Node) bool {
-	jsdocs := node.JSDoc(tx.sourceFile)
+// hasReflectionJSDoc checks if a node of the given file has a @reflection JSDoc tag.
+func hasReflectionJSDoc(file *ast.SourceFile, node *ast.Node) bool {
+	jsdocs := node.JSDoc(file)
 	for _, jsdoc := range jsdocs {
 		if jsdoc.Kind != ast.KindJSDoc {
 			continue

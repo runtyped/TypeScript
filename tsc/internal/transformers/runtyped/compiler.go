@@ -26,6 +26,9 @@ type typeCompiler struct {
 
 	sourceFile *ast.SourceFile
 
+	// modes resolves the reflection mode of the files declarations live in.
+	modes fileModes
+
 	// compileDeclarations: types in the same file that need __Ω
 	compileDeclarations map[*ast.Node]*compileDeclEntry
 	// compileDeclarationOrder: preserves insertion order (Go maps are unordered)
@@ -87,6 +90,23 @@ func newTypeCompiler(emitContext *printer.EmitContext, emitResolver printer.Emit
 		compileDeclarationOrder: nil,
 		embedDeclarations:       make(map[*ast.Node]*embedDeclEntry),
 		compiledDeclarations:    make(map[*ast.Node]bool),
+	}
+}
+
+// isWithReflection reports whether declaration, which lives in file, is
+// reflected: its file is not excluded and, in "explicit" mode, the declaration
+// carries a @reflection JSDoc tag. Port of compiler.ts's isWithReflection.
+func (tc *typeCompiler) isWithReflection(file *ast.SourceFile, declaration *ast.Node) bool {
+	if file == nil {
+		return true // intrinsic types are always reflected
+	}
+	switch tc.modes.modeFor(file) {
+	case "never":
+		return false
+	case "explicit":
+		return hasReflectionJSDoc(file, declaration)
+	default:
+		return true
 	}
 }
 
@@ -1240,7 +1260,12 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 						})
 					}
 				} else {
-					// For .ts files, add import and use it
+					// For .ts files, add import and use it — unless that file is
+					// not reflected and so never defines __Ω{name}.
+					if !tc.isWithReflection(declSourceFile, declaration) {
+						tc.resolveTypeOnlyImport(typeName, program)
+						return
+					}
 					if resolved.importDeclaration != nil {
 						tc.addImports = append(tc.addImports, &addImportEntry{
 							identifier: getIdentifierName(runtimeTypeName),
@@ -1250,7 +1275,7 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 				}
 			} else {
 				// Same-file reference
-				if hasModifierKind(declaration, ast.KindDeclareKeyword) {
+				if hasModifierKind(declaration, ast.KindDeclareKeyword) || !tc.isWithReflection(tc.sourceFile, declaration) {
 					tc.resolveTypeOnlyImport(typeName, program)
 					return
 				}
@@ -1286,13 +1311,10 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 			return
 		}
 
-		// For .d.ts or same-file, check reflection
-		var reflection bool
-		if declSourceFile != nil && isDtsFile(declSourceFile.FileName().AsString()) {
-			reflection = true // conservative
-		} else {
-			reflection = true // default to true for same-file
-		}
+		// Classes and functions from a .d.ts are checked at runtime via their
+		// __type. Otherwise, check the current file's reflection, like compiler.ts.
+		reflection := (declSourceFile != nil && isDtsFile(declSourceFile.FileName().AsString())) ||
+			tc.isWithReflection(tc.sourceFile, declaration)
 		if !reflection {
 			tc.resolveTypeOnlyImport(typeName, program)
 			return

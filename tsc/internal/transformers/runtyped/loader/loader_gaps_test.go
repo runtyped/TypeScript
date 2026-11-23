@@ -1,12 +1,8 @@
 // Additional loader tests ported from loader.spec.ts — the parity-audit gaps
 // (2026-09-29): knownFiles tracking, cache sharing, custom compiler options,
 // namespace exports, decorators, graceful handling.
-//
-// NOT ported here (needs wiring decision — see audit): the JS loader reads
-// tsconfig.json reflection settings via getConfigResolver; the Go loader takes
-// the reflection mode explicitly via LoaderOptions. The tsconfig-driven loader
-// variants ("no option + tsconfig with/without reflection", "option overrides
-// tsconfig") are blocked until the config resolver is wired into the loader.
+// The tsconfig-driven variants ("no option + tsconfig with/without
+// reflection", "option overrides tsconfig") live in loader_tsconfig_test.go.
 
 package loader_test
 

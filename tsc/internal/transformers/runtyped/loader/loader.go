@@ -37,9 +37,16 @@ const (
 
 // LoaderOptions configures the Loader.
 type LoaderOptions struct {
-	// Reflection overrides tsconfig reflection setting.
-	// If empty, uses tsconfig's reflection setting (or "never" if no tsconfig).
+	// Reflection overrides the tsconfig.json reflection setting for every file.
+	// If empty, each file's mode comes from tsconfig.json (see
+	// runtyped.ReflectionConfig); without a `reflection` field, or without a
+	// tsconfig.json at all, files are reflected in "default" mode.
 	Reflection ReflectionMode
+
+	// TsConfig is the absolute path of the tsconfig.json whose reflection
+	// settings apply to every transformed file, like `tsc -p`. If empty, each
+	// file uses the nearest tsconfig.json above it.
+	TsConfig string
 
 	// CompilerOptions merged with defaults.
 	CompilerOptions *core.CompilerOptions
@@ -134,13 +141,17 @@ func (l *Loader) compileAndEmit(source, path string) (string, error) {
 	// Don't force "use strict" — let source directives pass through
 	compilerOptions.AlwaysStrict = core.TSFalse
 
-	// Set reflection mode
-	reflectionMode := string(l.options.Reflection)
-	if reflectionMode == "" {
-		reflectionMode = "default"
-	}
-	runtyped.SetReflectionModeOverride(reflectionMode)
+	// An explicit reflection mode overrides tsconfig.json for every file.
+	runtyped.SetReflectionModeOverride(string(l.options.Reflection))
 	defer runtyped.SetReflectionModeOverride("") // reset after compile
+
+	if l.options.TsConfig != "" {
+		configPath, ok := tspath.TryRootedFilePathFromAbsolute(l.options.TsConfig)
+		if !ok {
+			return "", fmt.Errorf("tsconfig path must be absolute: %s", l.options.TsConfig)
+		}
+		compilerOptions.ConfigFilePath = configPath
+	}
 
 	rootedPath, ok := tspath.TryRootedFilePathFromAbsolute(path)
 	if !ok {

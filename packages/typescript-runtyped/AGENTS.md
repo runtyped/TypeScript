@@ -28,7 +28,7 @@ it has the upstream rules (hereby tasks, compiler tests, baselines, PR format).
 | `  runtyped.go` | `reflectionTransformer`: AST visitor, entry `NewReflectionTransformer` |
 | `  compiler.go` | `typeCompiler`: turns type nodes into op programs, resolves declarations/imports |
 | `  program.go` | `compilerProgram`: op lists, co-routines, frames, stack; `buildPackStruct` |
-| `  ops.go` | `Op*` constants; **must match `@runtyped/type-spec`'s `ReflectionOp` exactly** |
+| `  ops.go` | `Op*` constants; **must match `ReflectionOp` in `@runtyped/type`'s `src/type-spec/type.ts` exactly** |
 | `  declaration_transformer.go` | Appends `export declare type __ΩX = any[]` to `.d.ts` output |
 | `  enabled.go` | On/off switch for the transformers (see "Tests") |
 | `  helpers.go`, `jsdoc.go` | Shared helpers (`parseTreeParent`, `getIdentifierName`, `@reflection` JSDoc) |

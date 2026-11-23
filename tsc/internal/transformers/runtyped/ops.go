@@ -2,7 +2,8 @@ package runtyped
 
 import "strings"
 
-// ReflectionOp mirrors @runtyped/type-spec's ReflectionOp enum.
+// ReflectionOp mirrors the ReflectionOp enum of @runtyped/type
+// (src/type-spec/type.ts in the runtyped/runtyped repository).
 // Values must match the TypeScript enum exactly — they are encoded into
 // the emitted __type/__Ω strings and decoded at runtime.
 const (

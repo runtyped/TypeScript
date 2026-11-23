@@ -21,7 +21,9 @@ FROM golang:1.27-bookworm AS go
 
 # The full (non-slim) Node image ships git and a C toolchain: golangci-lint's
 # custom build clones its sources with git, and some Go tests need cgo.
-FROM node:22-bookworm
+# Node 24: the API tests use `await using`, which Node 22 cannot parse; the
+# repository pins Node 24 (see "volta" in package.json).
+FROM node:24-bookworm
 
 COPY --from=go /usr/local/go /usr/local/go
 

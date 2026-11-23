@@ -1,0 +1,48 @@
+name: Runtyped
+
+# Runs only the tests that runtyped adds on top of upstream TypeScript (the
+# reflection transformers in tsc/internal/transformers/runtyped). The upstream
+# suites already run upstream; ci.yml does not trigger on the runtyped branch.
+# For the full suite, use packages/typescript-runtyped/Dockerfile.test.
+
+on:
+  push:
+    branches: [runtyped]
+  pull_request:
+    branches: [runtyped]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 'lts/*'
+          package-manager-cache: false
+      - uses: ./.github/actions/setup-go
+
+      # The runtime tests run the compiled output with node and resolve
+      # @runtyped/type from /app/node_modules (as in Dockerfile.test), at the
+      # version range the published package declares as its peer dependency.
+      - name: Install @runtyped/type
+        run: |
+          sudo mkdir -p /app
+          sudo chown "$USER" /app
+          range=$(node -p "require('./packages/typescript-runtyped/npm/package.json').peerDependencies['@runtyped/type']")
+          npm install --prefix /app --no-save --no-package-lock --no-audit --no-fund "@runtyped/type@$range"
+
+      - name: Test
+        run: go -C tsc test -race ./internal/transformers/runtyped/...

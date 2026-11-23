@@ -32,6 +32,7 @@ it has the upstream rules (hereby tasks, compiler tests, baselines, PR format).
 | `  declaration_transformer.go` | Appends `export declare type __ΩX = any[]` to `.d.ts` output |
 | `  enabled.go` | On/off switch for the transformers (see "Tests") |
 | `  helpers.go`, `jsdoc.go` | Shared helpers (`parseTreeParent`, `getIdentifierName`, `@reflection` JSDoc) |
+| `  reflection_config.go` | `ReflectionConfig`: per-file reflection mode from tsconfig.json; a missing `reflection` field means "default" (unlike DeepKit, where it means "never") |
 | `  config/` | tsconfig `reflection` option resolution (port of DeepKit's config/resolver) |
 | `  loader/` | `Loader`: one-file-at-a-time API for bundlers (port of `DeepkitLoader`) |
 | `packages/typescript-runtyped/` | Packaging: `Dockerfile`, `Dockerfile.test`, `npm/` (package.json, `bin/tsc.js` launcher, user README) |
@@ -39,10 +40,11 @@ it has the upstream rules (hereby tasks, compiler tests, baselines, PR format).
 **Upstream files the fork touches** (keep this list short, and mark additions
 with a runtyped comment):
 
-- `tsc/internal/compiler/emitter.go`: adds `runtyped.NewReflectionTransformer`
+- `tsc/internal/compiler/emitter.go`: adds `runtyped.NewReflectionTransformerWithConfig`
   first in the script transformer chain (it must run before type erasure) and
   `runtyped.NewDeclarationTransformer` after the declaration transformers, both
-  guarded by `runtyped.Enabled()`.
+  guarded by `runtyped.Enabled()`. The `runtypedReflectionConfig` helper hands
+  them the program's file system so they can read tsconfig.json.
 - `tsc/internal/transformers/chain.go`: `TransformOptions.SourceFiles` and
   `TransformOptions.ReflectionMode`.
 
@@ -62,7 +64,9 @@ Check the footprint with:
 - Test runtyped behaviour with Go tests in `tsc/internal/transformers/runtyped/`
   using the helpers in the `runtyped_test` package: `compileSingleFileJS`
   (`harness_smoke_test.go`), `compileFilesJS` (`crash_regression_test.go`),
-  `compileHoistFiles`, plus `assertContains`/`assertNotContains`. Do **not** add
+  `compileHoistFiles`, `compileProject` (`tsconfig_reflection_test.go`, for
+  tests that need a tsconfig.json on the VFS), plus
+  `assertContains`/`assertNotContains`. Do **not** add
   runtyped cases to `tsc/testdata/tests/cases/`.
 - Reproduce bugs with a failing regression test first (see
   `crash_regression_test.go` for the pattern).

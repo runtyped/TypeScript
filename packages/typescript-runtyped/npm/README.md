@@ -60,6 +60,23 @@ Add it to your `package.json` scripts:
 Compiled output gains type-reflection data consumed by [@runtyped/type] at
 run time; this package itself is only needed at build time.
 
+### Limiting reflection
+
+By default every file is reflected. A top-level `reflection` field in
+`tsconfig.json` narrows that down, and is inherited through `extends`:
+
+```jsonc
+{
+  "reflection": true,          // or "default": reflect everything (same as omitting it)
+  "reflection": false,         // or "never": reflect nothing
+  "reflection": "explicit",    // only declarations tagged with a /** @reflection */ JSDoc comment
+  "reflection": ["src/**/*.ts"] // only files matching these patterns, relative to this tsconfig.json
+}
+```
+
+With `tsc -p`, the given `tsconfig.json` applies to every file in the program.
+Without it, each file uses the nearest `tsconfig.json` above it.
+
 This package is the compile-time counterpart to [@runtyped/type].
 
 ## Binaries

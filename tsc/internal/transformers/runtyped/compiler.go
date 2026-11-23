@@ -2,6 +2,7 @@ package runtyped
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/microsoft/TypeScript/tsc/internal/ast"
@@ -28,6 +29,16 @@ type typeCompiler struct {
 
 	// modes resolves the reflection mode of the files declarations live in.
 	modes fileModes
+
+	// visitExpression, when set, applies the reflection transformer to an
+	// expression the type compiler embeds in emitted code (e.g. a property's
+	// default value), so that it gets the same transformations (such as
+	// `Map.Ω = [...]` for `new Map<K, V>()`) as the original.
+	visitExpression func(*ast.Node) *ast.Node
+
+	// inferName, while set, is a type parameter name whose references are
+	// compiled as `infer <name>` (see resolveTypeParameter).
+	inferName string
 
 	// compileDeclarations: types in the same file that need __Ω
 	compileDeclarations map[*ast.Node]*compileDeclEntry
@@ -93,21 +104,27 @@ func newTypeCompiler(emitContext *printer.EmitContext, emitResolver printer.Emit
 	}
 }
 
-// isWithReflection reports whether declaration, which lives in file, is
-// reflected: its file is not excluded and, in "explicit" mode, the declaration
-// carries a @reflection JSDoc tag. Port of compiler.ts's isWithReflection.
+// isWithReflection reports whether declaration is reflected, given the
+// reflection mode of file and the declaration's own @reflection tag. Port of
+// compiler.ts's isWithReflection.
+//
+// compiler.ts reads the @reflection tag from file's text, at the position of
+// declaration. For a declaration from another file that finds no tag, so a
+// class imported from another file is referenced even when it is tagged
+// `@reflection never` there. Tags are only read here when declaration is in
+// file, to keep that behaviour.
 func (tc *typeCompiler) isWithReflection(file *ast.SourceFile, declaration *ast.Node) bool {
 	if file == nil {
+		if enabled, ok := explicitReflectionMode(tc.emitContext, declaration); ok && !enabled {
+			return false
+		}
 		return true // intrinsic types are always reflected
 	}
-	switch tc.modes.modeFor(file) {
-	case "never":
-		return false
-	case "explicit":
-		return hasReflectionJSDoc(file, declaration)
-	default:
-		return true
+	mode := tc.modes.modeFor(file)
+	if ast.GetSourceFileOfNode(declaration) != file {
+		return mode != "never" && mode != "explicit"
 	}
+	return isReflectedByMode(tc.emitContext, mode, declaration)
 }
 
 // extractPackStructOfType walks a type node and emits opcodes into the program.
@@ -361,8 +378,22 @@ func (tc *typeCompiler) extractClass(node *ast.Node, program *compilerProgram) {
 		}
 	}
 
-	// Members
+	// Members. Of several members with the same name and staticness (method
+	// overloads and their implementation), only the first is reflected, like
+	// compiler.ts.
+	type memberKey struct {
+		name     string
+		isStatic bool
+	}
+	seen := make(map[memberKey]bool)
 	for _, member := range members.Nodes {
+		if name := getNameAsString(member.Name()); name != "" {
+			key := memberKey{name, hasModifierKind(member, ast.KindStaticKeyword)}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
 		tc.extractPackStructOfType(member, program)
 	}
 
@@ -394,6 +425,7 @@ func (tc *typeCompiler) extractClass(node *ast.Node, program *compilerProgram) {
 	// Type name
 	if name != nil {
 		tc.resolveTypeName(getIdentifierName(name), program)
+		tc.pushDescription(node, program)
 	}
 }
 
@@ -455,10 +487,36 @@ func (tc *typeCompiler) extractMappedType(node *ast.Node, program *compilerProgr
 // extractTypeAlias handles type alias declarations.
 func (tc *typeCompiler) extractTypeAlias(node *ast.Node, program *compilerProgram) {
 	ta := node.AsTypeAliasDeclaration()
-	tc.extractPackStructOfType(ta.Type, program)
+	typeNode := ta.Type
+	// TypeAnnotation<T, Options> is declared as `unknown` and tagged
+	// @intrinsic. Its runtime shape is { __meta?: never & [T, Options] },
+	// like compiler.ts's intrinsicMetaDeclaration.
+	if ta.Name() != nil && getIdentifierName(ta.Name()) == "TypeAnnotation" {
+		if file := ast.GetSourceFileOfNode(node); file != nil {
+			if _, found := ParseJSDocAttributeFromText(leadingComments(file, node), "intrinsic"); found {
+				typeNode = tc.intrinsicMetaType()
+			}
+		}
+	}
+	tc.extractPackStructOfType(typeNode, program)
 	if ta.Name() != nil {
 		tc.resolveTypeName(getIdentifierName(ta.Name()), program)
 	}
+}
+
+// intrinsicMetaType builds the type `{ __meta?: never & [T, Options] }`, the
+// runtime shape of the @intrinsic TypeAnnotation<T, Options>.
+func (tc *typeCompiler) intrinsicMetaType() *ast.Node {
+	f := tc.factory
+	typeRef := func(name string) *ast.Node {
+		return f.NewTypeReferenceNode(f.NewIdentifier(name), nil)
+	}
+	meta := f.NewIntersectionTypeNode(f.NewNodeList([]*ast.Node{
+		f.NewKeywordTypeNode(ast.KindNeverKeyword),
+		f.NewTupleTypeNode(f.NewNodeList([]*ast.Node{typeRef("T"), typeRef("Options")})),
+	}))
+	property := f.NewPropertySignatureDeclaration(nil, f.NewIdentifier("__meta"), f.NewToken(ast.KindQuestionToken), meta, nil)
+	return f.NewTypeLiteralNode(f.NewNodeList([]*ast.Node{property}))
 }
 
 // extractInterfaceOrTypeLiteral handles interface declarations and type literals.
@@ -481,6 +539,7 @@ func (tc *typeCompiler) extractInterfaceOrTypeLiteral(node *ast.Node, program *c
 			tc.extractPackStructOfType(member, program)
 		}
 		program.pushOp(OpObjectLiteral)
+		tc.pushDescription(node, program)
 		if id.Name() != nil {
 			tc.resolveTypeName(getIdentifierName(id.Name()), program)
 		}
@@ -491,6 +550,7 @@ func (tc *typeCompiler) extractInterfaceOrTypeLiteral(node *ast.Node, program *c
 			tc.extractPackStructOfType(member, program)
 		}
 		program.pushOp(OpObjectLiteral)
+		tc.pushDescription(tc.parent(node), program)
 	}
 	program.popFrameImplicit()
 }
@@ -536,14 +596,14 @@ func (tc *typeCompiler) extractPropertySignature(node *ast.Node, program *compil
 	ps := node.AsPropertySignatureDeclaration()
 	if ps.Type != nil {
 		tc.extractPackStructOfType(ps.Type, program)
-		name := getPropertyName(ps.Name())
-		program.pushOp(OpPropertySignature, program.findOrAddStackEntry(stackEntry{kind: stackEntryString, str: name}))
+		program.pushOp(OpPropertySignature, program.findOrAddStackEntry(tc.propertyNameEntry(ps.Name())))
 		if ps.PostfixToken != nil {
 			program.pushOp(OpOptional)
 		}
 		if hasModifierKind(node, ast.KindReadonlyKeyword) {
 			program.pushOp(OpReadonly)
 		}
+		tc.pushDescription(node, program)
 	} else {
 		program.pushOp(OpUnknown)
 	}
@@ -551,6 +611,10 @@ func (tc *typeCompiler) extractPropertySignature(node *ast.Node, program *compil
 
 // extractPropertyDeclaration handles property declaration nodes.
 func (tc *typeCompiler) extractPropertyDeclaration(node *ast.Node, program *compilerProgram) {
+	// A property marked `@reflection no` is left out of its class's type.
+	if enabled, ok := explicitReflectionMode(tc.emitContext, node); ok && !enabled {
+		return
+	}
 	pd := node.AsPropertyDeclaration()
 
 	if pd.Type != nil {
@@ -561,10 +625,10 @@ func (tc *typeCompiler) extractPropertyDeclaration(node *ast.Node, program *comp
 		program.pushOp(OpUnknown)
 	}
 
-	name := getPropertyName(pd.Name())
-	program.pushOp(OpProperty, program.findOrAddStackEntry(stackEntry{kind: stackEntryString, str: name}))
+	program.pushOp(OpProperty, program.findOrAddStackEntry(tc.propertyNameEntry(pd.Name())))
 
-	if pd.PostfixToken != nil {
+	// `name?:` is optional; the definite assignment `name!:` is not.
+	if pd.PostfixToken != nil && pd.PostfixToken.Kind == ast.KindQuestionToken {
 		program.pushOp(OpOptional)
 	}
 	if hasModifierKind(node, ast.KindReadonlyKeyword) {
@@ -584,12 +648,17 @@ func (tc *typeCompiler) extractPropertyDeclaration(node *ast.Node, program *comp
 	}
 
 	if pd.Initializer != nil {
+		initializer := pd.Initializer
+		if tc.visitExpression != nil {
+			initializer = tc.visitExpression(initializer)
+		}
 		retBody := tc.factory.NewBlock(tc.factory.NewNodeList([]*ast.Node{
-			tc.factory.NewReturnStatement(pd.Initializer),
-		}), true)
+			tc.factory.NewReturnStatement(initializer),
+		}), false)
 		fnExpr := tc.factory.NewFunctionExpression(nil, nil, nil, nil, nil, nil, nil, retBody)
 		program.pushOp(OpDefaultValue, program.findOrAddStackEntry(stackEntry{kind: stackEntryNode, node: fnExpr}))
 	}
+	tc.pushDescription(node, program)
 }
 
 // extractConditionalType handles conditional type nodes.
@@ -637,10 +706,13 @@ func (tc *typeCompiler) extractConditionalType(node *ast.Node, program *compiler
 
 // extractInferType handles infer type nodes.
 func (tc *typeCompiler) extractInferType(node *ast.Node, program *compilerProgram) {
-	it := node.AsInferTypeNode()
+	tc.pushInfer(getIdentifierName(node.AsInferTypeNode().TypeParameter.Name()), program)
+}
+
+// pushInfer compiles `infer <typeParamName>`.
+func (tc *typeCompiler) pushInfer(typeParamName string, program *compilerProgram) {
 	frame := program.findConditionalFrame()
 	if frame != nil {
-		typeParamName := getIdentifierName(it.TypeParameter.Name())
 		variable := program.findVariable(typeParamName)
 		if variable == nil {
 			program.pushVariableAtFrame(typeParamName, frame)
@@ -658,9 +730,15 @@ func (tc *typeCompiler) extractInferType(node *ast.Node, program *compilerProgra
 
 // extractFunctionLike handles method, constructor, function, arrow, etc. type nodes.
 func (tc *typeCompiler) extractFunctionLike(node *ast.Node, program *compilerProgram) {
+	// A function marked `@reflection no` is reflected as any.
+	if enabled, ok := explicitReflectionMode(tc.emitContext, node); ok && !enabled {
+		program.pushOp(OpAny)
+		return
+	}
 	var parameters *ast.NodeList
 	var typeNode *ast.Node
 	var name string
+	nameEntry := stackEntry{kind: stackEntryString}
 	var hasName bool
 
 	switch node.Kind {
@@ -690,14 +768,14 @@ func (tc *typeCompiler) extractFunctionLike(node *ast.Node, program *compilerPro
 		ms := node.AsMethodSignatureDeclaration()
 		parameters = ms.Parameters
 		typeNode = ms.Type
-		name = getPropertyName(ms.Name())
-		hasName = name != ""
+		nameEntry = tc.propertyNameEntry(ms.Name())
+		hasName = nameEntry.kind != stackEntryString || nameEntry.str != ""
 	case ast.KindMethodDeclaration:
 		md := node.AsMethodDeclaration()
 		parameters = md.Parameters
 		typeNode = md.Type
-		name = getPropertyName(md.Name())
-		hasName = name != ""
+		nameEntry = tc.propertyNameEntry(md.Name())
+		hasName = nameEntry.kind != stackEntryString || nameEntry.str != ""
 	case ast.KindArrowFunction:
 		af := node.AsArrowFunction()
 		parameters = af.Parameters
@@ -742,6 +820,9 @@ func (tc *typeCompiler) extractFunctionLike(node *ast.Node, program *compilerPro
 			var paramType *ast.Node
 			if pd.Type != nil {
 				paramType = pd.Type
+				if receiveType := tc.receiveTypeOfParameter(param); receiveType != nil {
+					paramType = receiveType
+				}
 				if pd.DotDotDotToken != nil && paramType.Kind == ast.KindArrayType {
 					paramType = paramType.AsArrayTypeNode().ElementType
 				}
@@ -774,6 +855,10 @@ func (tc *typeCompiler) extractFunctionLike(node *ast.Node, program *compilerPro
 			if hasModifierKind(param, ast.KindReadonlyKeyword) {
 				program.pushOp(OpReadonly)
 			}
+			tc.pushDescription(param, program)
+			if pd.Initializer != nil && pd.Type != nil && getReceiveTypeParameter(pd.Type) == nil {
+				program.pushOp(OpDefaultValue, program.findOrAddStackEntry(stackEntry{kind: stackEntryNode, node: tc.createArrowFunction(pd.Initializer)}))
+			}
 		}
 	}
 
@@ -796,7 +881,10 @@ func (tc *typeCompiler) extractFunctionLike(node *ast.Node, program *compilerPro
 		op = OpFunction
 	}
 
-	program.pushOp(op, program.findOrAddStackEntry(stackEntry{kind: stackEntryString, str: name}))
+	if nameEntry.kind == stackEntryString && nameEntry.str == "" {
+		nameEntry.str = name
+	}
+	program.pushOp(op, program.findOrAddStackEntry(nameEntry))
 
 	// Method-specific modifiers
 	if node.Kind == ast.KindMethodDeclaration {
@@ -819,6 +907,7 @@ func (tc *typeCompiler) extractFunctionLike(node *ast.Node, program *compilerPro
 		program.pushOp(OpOptional)
 	}
 
+	tc.pushDescription(node, program)
 	program.popFrameImplicit()
 }
 
@@ -886,6 +975,7 @@ func (tc *typeCompiler) extractEnumDeclaration(node *ast.Node, program *compiler
 		}
 	}
 	program.pushOp(OpEnum)
+	tc.pushDescription(node, program)
 	if ed.Name() != nil {
 		tc.resolveTypeName(getIdentifierName(ed.Name()), program)
 	}
@@ -901,11 +991,7 @@ func (tc *typeCompiler) extractIndexSignature(node *ast.Node, program *compilerP
 		program.pushOp(OpAny)
 	}
 	tc.extractPackStructOfType(is.Type, program)
-	program.pushOp(OpIndexAccess) // Note: this should be OpIndexSignature
-	// Fix: actually it should be indexSignature, let me use the correct op
-	// The ops are already pushed, but we pushed OpIndexAccess instead of OpIndexSignature
-	// Let me correct this — the last op was wrong, replace it
-	// Actually, we can't unpush. Let me fix this properly.
+	program.pushOp(OpIndexSignature)
 }
 
 // extractTypeQuery handles typeof type queries.
@@ -1011,6 +1097,33 @@ var newExprMap = map[string]int{
 	"Float32Array":      OpFloat32Array,
 	"Float64Array":      OpFloat64Array,
 	"ArrayBuffer":       OpArrayBuffer,
+}
+
+// propertyNameEntry returns the stack entry naming a property or method, like
+// reflection-ast.ts's getPropertyName: a string, a number for a numeric name,
+// or an arrow function returning the key of a computed name (e.g.
+// `[Symbol.iterator]`).
+func (tc *typeCompiler) propertyNameEntry(node *ast.Node) stackEntry {
+	if node != nil {
+		switch node.Kind {
+		case ast.KindNumericLiteral:
+			if n, err := strconv.ParseFloat(node.AsNumericLiteral().Text, 64); err == nil {
+				return stackEntry{kind: stackEntryNumber, num: n}
+			}
+		case ast.KindComputedPropertyName:
+			// Cloned: the name may come from another file (e.g. a lib), whose
+			// nodes cannot be printed into this one.
+			return stackEntry{kind: stackEntryNode, node: tc.createArrowFunction(tc.factory.DeepCloneNode(node.AsComputedPropertyName().Expression))}
+		}
+	}
+	return stackEntry{kind: stackEntryString, str: getPropertyName(node)}
+}
+
+// pushDescription emits the @description JSDoc attribute of node, if any.
+func (tc *typeCompiler) pushDescription(node *ast.Node, program *compilerProgram) {
+	if description := jsdocAttribute(node, "description"); description != "" {
+		program.pushOp(OpDescription, program.findOrAddStackEntry(stackEntry{kind: stackEntryString, str: description}))
+	}
 }
 
 // resolveTypeName pushes a typeName opcode.
@@ -1120,6 +1233,10 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 
 	// Check if it references a variable in the current scope
 	if typeName.Kind == ast.KindIdentifier {
+		if tc.inferName != "" && name == tc.inferName {
+			tc.pushInfer(name, program)
+			return
+		}
 		variable := program.findVariable(name)
 		if variable != nil {
 			program.pushOp(OpLoads, variable.frameOffset, variable.stackIndex)
@@ -1279,6 +1396,11 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 					tc.resolveTypeOnlyImport(typeName, program)
 					return
 				}
+				// processDeclarations compiles declarations in this order, so a
+				// declaration first met as a reference must be added to it too.
+				if _, exists := tc.compileDeclarations[declaration]; !exists {
+					tc.compileDeclarationOrder = append(tc.compileDeclarationOrder, declaration)
+				}
 				tc.compileDeclarations[declaration] = &compileDeclEntry{
 					name:       name,
 					sourceFile: declSourceFile,
@@ -1286,15 +1408,14 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 			}
 		}
 
-		// Push the reference
-		var arrowBody *ast.Node
+		// Push the reference. A reference to the type being compiled is a
+		// plain 0, which the runtime resolves to the type itself.
+		var index int
 		if program.forNode == declaration {
-			arrowBody = tc.factory.NewNumericLiteral("0", ast.TokenFlagsNone)
+			index = program.pushStackNumber(0)
 		} else {
-			arrowBody = runtimeTypeName
+			index = program.pushStackNode(tc.createArrowFunction(runtimeTypeName))
 		}
-		arrow := tc.createArrowFunction(arrowBody)
-		index := program.pushStackNode(arrow)
 
 		if typeArguments != nil && len(typeArguments.Nodes) > 0 {
 			for _, arg := range typeArguments.Nodes {
@@ -1394,9 +1515,111 @@ func (tc *typeCompiler) resolveTypeOnlyImport(typeName *ast.Node, program *compi
 }
 
 // resolveTypeParameter handles type parameter references.
+// resolveTypeParameter compiles a reference (typeRef) to a type parameter
+// (declaration). Port of compiler.ts's resolveTypeParameter.
+//
+// A type parameter used where it is declared (e.g. in a class's own
+// properties) is any. One used elsewhere, typically in a nested function, is
+// resolved from runtime values: from the function's ReceiveType<T> parameter
+// when it has one, else inferred from the parameters whose type mentions it,
+// as `typeof param extends ParamType<infer T> ? T : never`. Failing that, it
+// is its constraint, or never.
 func (tc *typeCompiler) resolveTypeParameter(declaration *ast.Node, typeRef *ast.Node, typeArguments *ast.NodeList, program *compilerProgram) {
-	// For now, push any. Full resolution is complex (involves runtime type inference).
-	program.pushOp(OpAny)
+	parent := tc.parent(declaration)
+	isUsedInFunction := parent != nil && ast.IsFunctionLike(parent)
+	if !(isUsedInFunction && program.isResolveFunctionParameters(parent)) && tc.getTypeUser(declaration) == tc.getTypeUser(typeRef) {
+		program.pushOp(OpAny)
+		return
+	}
+
+	argumentName := getIdentifierName(declaration.Name())
+	type foundUser struct {
+		paramType     *ast.Node
+		parameterName string
+	}
+	var foundUsers []foundUser
+	if isUsedInFunction {
+		for _, parameter := range parent.Parameters() {
+			pd := parameter.AsParameterDeclaration()
+			if pd.Type == nil || pd.Name().Kind != ast.KindIdentifier {
+				continue
+			}
+			if mentionsIdentifier(pd.Type, argumentName) {
+				foundUsers = append(foundUsers, foundUser{paramType: pd.Type, parameterName: getIdentifierName(pd.Name())})
+			}
+		}
+	}
+
+	switch {
+	case len(foundUsers) > 0:
+		for _, user := range foundUsers {
+			if user.paramType.Kind == ast.KindTypeReference && user.paramType.AsTypeReferenceNode().TypeName.Kind == ast.KindIdentifier &&
+				getIdentifierName(user.paramType.AsTypeReferenceNode().TypeName) == "ReceiveType" {
+				// ReceiveType<T> holds T itself at runtime.
+				program.pushOp(OpInline, program.pushStackNode(tc.factory.NewIdentifier(user.parameterName)))
+				return
+			}
+		}
+		for _, user := range foundUsers {
+			program.pushConditionalFrame()
+			program.pushOp(OpTypeof, program.pushStackNode(tc.createArrowFunction(tc.factory.NewIdentifier(user.parameterName))))
+			previous := tc.inferName
+			tc.inferName = argumentName
+			tc.extractPackStructOfType(user.paramType, program)
+			tc.inferName = previous
+			program.pushOp(OpExtends)
+			if variable := program.findVariable(argumentName); variable != nil {
+				program.pushOp(OpLoads, variable.frameOffset, variable.stackIndex)
+			} else {
+				// T was not found in the parameter type (no infer T was created).
+				program.pushOp(OpAny)
+			}
+			program.pushOp(OpNever)
+			program.pushOp(OpCondition)
+			program.popFrameImplicit()
+		}
+	case declaration.AsTypeParameterDeclaration().Constraint != nil:
+		if isUsedInFunction {
+			program.resolveFunctionParametersIncrease(parent)
+		}
+		tc.extractPackStructOfType(declaration.AsTypeParameterDeclaration().Constraint, program)
+		if isUsedInFunction {
+			program.resolveFunctionParametersDecrease(parent)
+		}
+	default:
+		program.pushOp(OpNever)
+	}
+}
+
+// getTypeUser returns the node that "uses" type: the nearest enclosing block,
+// class (for constructors and methods too) or function. Port of compiler.ts's
+// getTypeUser.
+func (tc *typeCompiler) getTypeUser(node *ast.Node) *ast.Node {
+	for current := node; current != nil; current = tc.parent(current) {
+		switch current.Kind {
+		case ast.KindBlock, ast.KindClassDeclaration, ast.KindClassExpression,
+			ast.KindArrowFunction, ast.KindFunctionDeclaration, ast.KindFunctionExpression:
+			return current
+		case ast.KindConstructor, ast.KindMethodDeclaration:
+			return tc.parent(current)
+		}
+	}
+	return nil
+}
+
+// mentionsIdentifier reports whether an identifier named name occurs below node.
+func mentionsIdentifier(node *ast.Node, name string) bool {
+	found := false
+	var visit func(n *ast.Node) bool
+	visit = func(n *ast.Node) bool {
+		if n.Kind == ast.KindIdentifier && n.AsIdentifier().Text == name {
+			found = true
+			return true
+		}
+		return n.ForEachChild(visit)
+	}
+	node.ForEachChild(visit)
+	return found
 }
 
 // getDeclarationVariableName returns the __Ω-prefixed identifier for a type name.
@@ -1472,6 +1695,12 @@ func (tc *typeCompiler) resolveDeclaration(typeName *ast.Node) *resolveDeclarati
 	}
 
 	if importDeclaration != nil {
+		// `import type { X }` makes every binding of the clause type-only.
+		if importDeclaration.Kind == ast.KindImportDeclaration {
+			if clause := importDeclaration.AsImportDeclaration().ImportClause; clause != nil && clause.AsImportClause().PhaseModifier == ast.KindTypeKeyword {
+				typeOnly = true
+			}
+		}
 		// Try to resolve the import to the actual declaration in another file
 		resolvedDecl := tc.resolveImportSpecifier(name, importDeclaration)
 		return &resolveDeclarationResult{
@@ -1618,7 +1847,12 @@ func (tc *typeCompiler) valueToExpression(entries []stackEntry) *ast.Node {
 }
 
 // getTypeOfType compiles a type node into an expression.
+// It returns nil when node is not reflected (e.g. it sits in a declaration
+// tagged `@reflection never`), like compiler.ts's getTypeOfType.
 func (tc *typeCompiler) getTypeOfType(node *ast.Node) *ast.Node {
+	if !tc.isWithReflection(tc.sourceFile, node) {
+		return nil
+	}
 	program := newCompilerProgram(node, tc.sourceFile)
 	tc.extractPackStructOfType(node, program)
 	return tc.packOpsAndStack(program, true)
@@ -1626,6 +1860,9 @@ func (tc *typeCompiler) getTypeOfType(node *ast.Node) *ast.Node {
 
 // getTypeOfFunction compiles a function-like node, returning nil for empty ops.
 func (tc *typeCompiler) getTypeOfFunction(node *ast.Node) *ast.Node {
+	if !tc.isWithReflection(tc.sourceFile, node) {
+		return nil
+	}
 	program := newCompilerProgram(node, tc.sourceFile)
 	tc.extractPackStructOfType(node, program)
 	return tc.packOpsAndStack(program, false)
@@ -1896,10 +2133,23 @@ func (tc *typeCompiler) followExport(declarationName string, exportDecl *ast.Nod
 
 // shouldReExportOmegaSymbol determines whether a named re-export should include
 // the corresponding __Ω symbol. Only type declarations (interface, type alias, enum)
-// get __Ω re-exports — classes use static __type instead.
+// get __Ω re-exports — classes use static __type instead. A declaration from a
+// .d.ts file needs its __Ω symbol to be declared there, and one from a .ts file
+// needs to be reflected, or the re-export would name a missing binding.
 func (tc *typeCompiler) shouldReExportOmegaSymbol(originalName string, exportDecl *ast.Node) bool {
 	resolvedDecl := tc.resolveImportSpecifier(originalName, exportDecl)
 	if resolvedDecl == nil {
+		return false
+	}
+
+	declFile := ast.GetSourceFileOfNode(resolvedDecl)
+	if declFile == nil {
+		return false
+	}
+	if isDtsFile(declFile.FileName().AsString()) {
+		return tc.resolveImportSpecifier("__Ω"+originalName, exportDecl) != nil
+	}
+	if !tc.isWithReflection(declFile, resolvedDecl) {
 		return false
 	}
 
@@ -1938,6 +2188,51 @@ func getReceiveTypeParameter(typeNode *ast.Node) *ast.Node {
 		}
 	}
 	return nil
+}
+
+// receiveTypeOfParameter returns the ReceiveType<T> reference that the
+// declared type of param contains (e.g. `x?: Serializer | ReceiveType<T>`), if
+// compiler.ts would rewrite param to it. compiler.ts replaces such a
+// parameter's type with the bare ReceiveType<T> (adding a default value that
+// reads the function's Ω) before compiling the function's type, so only
+// ReceiveType<T> is reflected for that parameter.
+func (tc *typeCompiler) receiveTypeOfParameter(param *ast.Node) *ast.Node {
+	pd := param.AsParameterDeclaration()
+	parent := tc.parent(param)
+	if pd.Type == nil || parent == nil {
+		return nil
+	}
+	typeParameters := parent.TypeParameterList()
+	if parent.Kind == ast.KindConstructor {
+		typeParameters = nil
+		if class := tc.parent(parent); class != nil && ast.IsClassLike(class) {
+			typeParameters = class.TypeParameterList()
+		}
+	}
+	if typeParameters == nil {
+		return nil
+	}
+	receiveType := getReceiveTypeParameter(pd.Type)
+	if receiveType == nil {
+		return nil
+	}
+	typeArguments := receiveType.AsTypeReferenceNode().TypeArguments
+	if typeArguments == nil || len(typeArguments.Nodes) == 0 {
+		return nil
+	}
+	first := typeArguments.Nodes[0]
+	if first.Kind != ast.KindTypeReference || first.AsTypeReferenceNode().TypeName.Kind != ast.KindIdentifier {
+		return nil
+	}
+	// An arrow function needs a name to hold its Ω: compiler.ts leaves the
+	// parameter alone when the arrow is not assigned to a variable or property.
+	if parent.Kind == ast.KindArrowFunction {
+		holder := tc.parent(parent)
+		if holder == nil || (holder.Kind != ast.KindVariableDeclaration && holder.Kind != ast.KindPropertyAssignment) || holder.Name() == nil || holder.Name().Kind != ast.KindIdentifier {
+			return nil
+		}
+	}
+	return receiveType
 }
 
 // ReceiveTypeInfo maps type argument index → parameter index for ReceiveType params.

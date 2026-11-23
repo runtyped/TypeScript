@@ -147,6 +147,12 @@ func (tx *reflectionTransformer) visit(node *ast.Node) *ast.Node {
 	case ast.KindNewExpression:
 		return tx.visitNewExpression(node.AsNewExpression())
 
+	case ast.KindMethodDeclaration:
+		if converted := tx.visitObjectLiteralMethod(node); converted != nil {
+			return converted
+		}
+		return tx.Visitor().VisitEachChild(node)
+
 	case ast.KindPropertyAccessExpression, ast.KindElementAccessExpression:
 		visited := tx.Visitor().VisitEachChild(node)
 		visited = tx.handleChainContinuation(visited)
@@ -182,16 +188,21 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 	tx.tc = newTypeCompiler(tx.EmitContext(), tx.emitResolver, tx.sourceFiles)
 	tx.tc.sourceFile = node
 	tx.tc.modes = tx.modes
+	tx.tc.visitExpression = tx.Visitor().VisitNode
 
 	// Visit all children (which collects omegaStatements, additionalImports, etc.)
 	visited := tx.Visitor().VisitEachChild(node.AsNode()).AsSourceFile()
 
-	// Collect all top-level statements
-	originalStatements := visited.Statements.Nodes
-
 	// Process compileDeclarations and embedDeclarations
 	// This is the iterative loop from compiler.ts that compiles all pending declarations
 	tx.processDeclarations()
+
+	// Place each compiled declaration right before the declaration it was
+	// compiled from, in its own scope.
+	visited = tx.placeCompiledDeclarations(visited)
+
+	// Collect all top-level statements
+	originalStatements := visited.Statements.Nodes
 
 	// Build new top statements: omega variables + __assignType helper + hoisted function __type assignments
 	var newTopStatements []*ast.Node
@@ -260,6 +271,56 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 	return tx.Factory().UpdateSourceFile(visited, stmtList, visited.EndOfFileToken).AsSourceFile().AsNode()
 }
 
+// placeCompiledDeclarations inserts the compiled __Ω statements of each type
+// alias, interface and enum declared in a block (e.g. a function body) right
+// before that declaration, as compiler.ts does, so that equally named local
+// types of different functions do not collide. Declarations at the top level
+// or in a namespace (which TypeScript elides when it only holds types) keep
+// their __Ω statements at the top of the file.
+func (tx *reflectionTransformer) placeCompiledDeclarations(file *ast.SourceFile) *ast.SourceFile {
+	pending := 0
+	for _, declNode := range tx.tc.compileDeclarationOrder {
+		if d := tx.tc.compileDeclarations[declNode]; d != nil && len(d.compiled) > 0 {
+			pending++
+		}
+	}
+	if pending == 0 {
+		return file
+	}
+
+	placed := make(map[*ast.Node]bool, pending)
+	var visitor *ast.NodeVisitor
+	visitor = tx.EmitContext().NewNodeVisitor(func(node *ast.Node) *ast.Node {
+		node = visitor.VisitEachChild(node)
+		switch node.Kind {
+		case ast.KindTypeAliasDeclaration, ast.KindInterfaceDeclaration, ast.KindEnumDeclaration:
+			original := tx.EmitContext().MostOriginal(node)
+			d := tx.tc.compileDeclarations[original]
+			if d == nil || len(d.compiled) == 0 || placed[original] {
+				return node
+			}
+			if parent := tx.parseTreeParent(original); parent == nil || parent.Kind == ast.KindSourceFile || parent.Kind == ast.KindModuleBlock {
+				return node
+			}
+			placed[original] = true
+			statements := make([]*ast.Node, 0, len(d.compiled)+1)
+			statements = append(statements, d.compiled...)
+			return tx.Factory().NewSyntaxList(append(statements, node))
+		}
+		return node
+	})
+	file = visitor.VisitEachChild(file.AsNode()).AsSourceFile()
+
+	var unplaced []*ast.Node
+	for _, declNode := range tx.tc.compileDeclarationOrder {
+		if d := tx.tc.compileDeclarations[declNode]; d != nil && !placed[declNode] {
+			unplaced = append(unplaced, d.compiled...)
+		}
+	}
+	tx.omegaStatements = append(unplaced, tx.omegaStatements...)
+	return file
+}
+
 // processDeclarations handles the compileDeclarations and embedDeclarations maps.
 func (tx *reflectionTransformer) processDeclarations() {
 	for {
@@ -284,7 +345,6 @@ func (tx *reflectionTransformer) processDeclarations() {
 				continue
 			}
 			d.compiled = tx.tc.createProgramVarFromNode(declNode, d.name)
-			tx.omegaStatements = append(tx.omegaStatements, d.compiled...)
 		}
 
 		// Embed declarations
@@ -329,38 +389,11 @@ func (tx *reflectionTransformer) processDeclarations() {
 	}
 }
 
-// shouldReflect checks if a declaration should be reflected based on the reflection mode.
-// - "default" or "": all declarations are reflected
-// - "never": no declarations are reflected (handled at source file level, but this is a safety check)
-// - "explicit": only declarations with @reflection JSDoc tag are reflected
+// shouldReflect checks if a declaration of the current file should be
+// reflected, based on the file's reflection mode and the declaration's own
+// @reflection tag (or that of an enclosing node, including the file itself).
 func (tx *reflectionTransformer) shouldReflect(node *ast.Node) bool {
-	if tx.reflectionMode == "explicit" {
-		return hasReflectionJSDoc(tx.sourceFile, node)
-	}
-	return true
-}
-
-// hasReflectionJSDoc checks if a node of the given file has a @reflection JSDoc tag.
-func hasReflectionJSDoc(file *ast.SourceFile, node *ast.Node) bool {
-	jsdocs := node.JSDoc(file)
-	for _, jsdoc := range jsdocs {
-		if jsdoc.Kind != ast.KindJSDoc {
-			continue
-		}
-		doc := jsdoc.AsJSDoc()
-		if doc.Tags == nil {
-			continue
-		}
-		for _, tag := range doc.Tags.Nodes {
-			if tag.Kind == ast.KindJSDocUnknownTag {
-				tagName := tag.AsJSDocUnknownTag().TagName
-				if tagName != nil && tagName.AsIdentifier().Text == "reflection" {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return isReflectedByMode(tx.EmitContext(), tx.reflectionMode, node)
 }
 
 // ─── Classes ───
@@ -536,12 +569,13 @@ func (tx *reflectionTransformer) visitFunctionDeclaration(node *ast.Node) *ast.N
 		return visited.AsNode()
 	}
 
-	// Block-scoped: return a block containing [function, __type assignment]
-	// since the visitor can only return one node, we wrap in a Block
-	return tx.Factory().NewBlock(tx.Factory().NewNodeList([]*ast.Node{
+	// Block-scoped functions keep their __type assignment inline, as a sibling
+	// statement. Wrapping both in a block would scope the function to that
+	// block (function declarations are block-scoped in strict mode).
+	return tx.Factory().NewSyntaxList([]*ast.Node{
 		visited.AsNode(),
 		typeAssignment,
-	}), false)
+	})
 }
 
 func (tx *reflectionTransformer) visitFunctionExpression(node *ast.Node) *ast.Node {
@@ -565,6 +599,54 @@ func (tx *reflectionTransformer) visitFunctionExpression(node *ast.Node) *ast.No
 	// (receive-type call-site type passing, Ω side-channel assignments,
 	// optional-chain rewrites). Wrapping the original discards all of them.
 	return tx.wrapWithAssignType(visited.AsNode(), encodedType)
+}
+
+// visitObjectLiteralMethod turns a method of an object literal into a property
+// holding a function expression, so that it can carry __type, like
+// compiler.ts: `{add(v: number) {}}` becomes
+// `{add: __assignType(function add(v) {}, [...])}`. It returns nil for other
+// methods, and for `default()`, which cannot be converted without losing its
+// name.
+//
+// compiler.ts only converts methods that its visitor left unchanged: a method
+// whose body was transformed (e.g. because it returns an arrow function that
+// got a __type) is a new node without a parent, which fails its object
+// literal check. Such methods are kept as they are here too.
+func (tx *reflectionTransformer) visitObjectLiteralMethod(node *ast.Node) *ast.Node {
+	md := node.AsMethodDeclaration()
+	parent := tx.parseTreeParent(node)
+	if md.Body == nil || parent == nil || parent.Kind != ast.KindObjectLiteralExpression {
+		return nil
+	}
+	name := md.Name()
+	if name.Kind == ast.KindIdentifier && name.AsIdentifier().Text == "default" {
+		return nil
+	}
+	if !tx.shouldReflect(node) {
+		return nil
+	}
+
+	visitedNode := tx.Visitor().VisitEachChild(node)
+	if visitedNode != node {
+		return visitedNode
+	}
+	visited := visitedNode.AsMethodDeclaration()
+	factory := tx.Factory()
+	var fnName *ast.Node
+	if name.Kind == ast.KindIdentifier {
+		fnName = factory.NewIdentifier(name.AsIdentifier().Text)
+	}
+	fnExpr := factory.NewFunctionExpression(visited.Modifiers(), visited.AsteriskToken, fnName, visited.TypeParameters, visited.Parameters, visited.Type, visited.FullSignature, visited.Body)
+
+	// The type is that of a function expression named like the method; it
+	// is compiled from the original parameters, which keep their parents.
+	typeNode := factory.NewFunctionExpression(md.Modifiers(), md.AsteriskToken, fnName, md.TypeParameters, md.Parameters, md.Type, md.FullSignature, md.Body)
+	var value *ast.Node = fnExpr
+	if encodedType := tx.tc.getTypeOfFunction(typeNode); encodedType != nil {
+		tx.tc.embedAssignType = true
+		value = tx.wrapWithAssignType(fnExpr, encodedType)
+	}
+	return factory.NewPropertyAssignment(nil, visited.Name(), nil, nil, value)
 }
 
 func (tx *reflectionTransformer) visitArrowFunction(node *ast.Node) *ast.Node {
@@ -1580,7 +1662,8 @@ func (tx *reflectionTransformer) handleAutoTypeFunction(node *ast.Node, isNew bo
 	// Resolve the type to an encoded expression
 	typeExpr := tx.tc.getTypeOfType(typeArg)
 	if typeExpr == nil {
-		typeExpr = tx.Factory().NewIdentifier("undefined")
+		// Not reflected: leave the call alone, like compiler.ts.
+		return node
 	}
 
 	// Build new arguments: existing args + type expression

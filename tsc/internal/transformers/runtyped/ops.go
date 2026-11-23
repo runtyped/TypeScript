@@ -1,5 +1,7 @@
 package runtyped
 
+import "strings"
+
 // ReflectionOp mirrors @runtyped/type-spec's ReflectionOp enum.
 // Values must match the TypeScript enum exactly — they are encoded into
 // the emitted __type/__Ω strings and decoded at runtime.
@@ -167,10 +169,15 @@ var ops = map[int]opInfo{
 
 // encodeOps encodes a slice of opcodes into a string.
 // Each opcode is encoded as a single character (opcode + 33, starting at '!').
+//
+// Like String.fromCharCode in compiler.ts, each value maps to the code point
+// op + 33, which is above 127 for large ops and jump addresses, so the string
+// is built from runes rather than bytes (which would be invalid UTF-8).
 func encodeOps(opCodes []int) string {
-	buf := make([]byte, len(opCodes))
-	for i, op := range opCodes {
-		buf[i] = byte(op + 33)
+	var buf strings.Builder
+	buf.Grow(len(opCodes))
+	for _, op := range opCodes {
+		buf.WriteRune(rune(op + 33))
 	}
-	return string(buf)
+	return buf.String()
 }

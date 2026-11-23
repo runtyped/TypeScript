@@ -70,6 +70,11 @@ Check the footprint with:
   runtyped cases to `tsc/testdata/tests/cases/`.
 - Reproduce bugs with a failing regression test first (see
   `crash_regression_test.go` for the pattern).
+- Reflection data should match what `@runtyped/type-compiler` (the TypeScript
+  6 transformer) emits for the same source. `ts6_parity_test.go` pins the
+  differences found by compiling the runtyped repo with both; when you find
+  another, add a case there with the expectation checked against the
+  TypeScript 6 output.
 - `TestHoist_Runtime_*` execute output with node and need `@runtyped/type` at
   `/app/node_modules`. They **skip** when it can't be resolved and only really
   run inside the `Dockerfile.test` image.

@@ -10,7 +10,8 @@ import (
 // `export declare type __ΩX = any[]` for each, so that consumers
 // can detect the __Ω symbol and import it for cross-file type resolution.
 type DeclarationTransformer struct {
-	factory *printer.NodeFactory
+	factory     *printer.NodeFactory
+	emitContext *printer.EmitContext
 
 	// Reflection mode of the source file the declarations were emitted from;
 	// empty means "default".
@@ -20,7 +21,8 @@ type DeclarationTransformer struct {
 // NewDeclarationTransformer creates a new declaration transformer.
 func NewDeclarationTransformer(emitContext *printer.EmitContext) *DeclarationTransformer {
 	return &DeclarationTransformer{
-		factory: emitContext.Factory,
+		factory:     emitContext.Factory,
+		emitContext: emitContext,
 	}
 }
 
@@ -45,7 +47,7 @@ func (dt *DeclarationTransformer) TransformSourceFile(sourceFile *ast.SourceFile
 	for _, stmt := range sourceFile.Statements.Nodes {
 		switch stmt.Kind {
 		case ast.KindTypeAliasDeclaration:
-			if hasModifier(stmt, ast.ModifierFlagsExport) && stmt.Name() != nil && dt.reflects(sourceFile, stmt) {
+			if hasModifier(stmt, ast.ModifierFlagsExport) && stmt.Name() != nil && dt.reflects(stmt) {
 				name := getIdentifierName(stmt.Name())
 				if name != "" && !handled[name] {
 					handled[name] = true
@@ -53,7 +55,7 @@ func (dt *DeclarationTransformer) TransformSourceFile(sourceFile *ast.SourceFile
 				}
 			}
 		case ast.KindInterfaceDeclaration:
-			if hasModifier(stmt, ast.ModifierFlagsExport) && stmt.Name() != nil && dt.reflects(sourceFile, stmt) {
+			if hasModifier(stmt, ast.ModifierFlagsExport) && stmt.Name() != nil && dt.reflects(stmt) {
 				name := getIdentifierName(stmt.Name())
 				if name != "" && !handled[name] {
 					handled[name] = true
@@ -61,7 +63,7 @@ func (dt *DeclarationTransformer) TransformSourceFile(sourceFile *ast.SourceFile
 				}
 			}
 		case ast.KindEnumDeclaration:
-			if hasModifier(stmt, ast.ModifierFlagsExport) && stmt.Name() != nil && dt.reflects(sourceFile, stmt) {
+			if hasModifier(stmt, ast.ModifierFlagsExport) && stmt.Name() != nil && dt.reflects(stmt) {
 				name := getIdentifierName(stmt.Name())
 				if name != "" && !handled[name] {
 					handled[name] = true
@@ -100,8 +102,9 @@ func (dt *DeclarationTransformer) TransformSourceFile(sourceFile *ast.SourceFile
 	return dt.factory.UpdateSourceFile(sourceFile, updatedStatements, sourceFile.EndOfFileToken).AsSourceFile()
 }
 
-// reflects mirrors shouldReflect: in "explicit" mode only declarations tagged
-// with @reflection get a __Ω symbol.
-func (dt *DeclarationTransformer) reflects(file *ast.SourceFile, stmt *ast.Node) bool {
-	return dt.mode != "explicit" || hasReflectionJSDoc(file, stmt)
+// reflects mirrors shouldReflect: only declarations that the script
+// transformer reflects get a __Ω symbol. The @reflection tag is read from the
+// original .ts declaration the .d.ts statement was emitted from.
+func (dt *DeclarationTransformer) reflects(stmt *ast.Node) bool {
+	return isReflectedByMode(dt.emitContext, dt.mode, dt.emitContext.MostOriginal(stmt))
 }

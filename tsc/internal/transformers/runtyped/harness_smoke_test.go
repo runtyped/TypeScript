@@ -365,10 +365,11 @@ getType<string>();`},
 	}
 	t.Logf("app.js output:\n%s", appJS.Content)
 
-	// Direct passing: type arg is passed as a function argument
-	// Note: type arguments are stripped in emit, so getType<string>([...]) becomes getType([...])
-	if !strings.Contains(appJS.Content, "getType([") {
-		t.Errorf("expected direct passing: getType([")
+	// Direct passing: type arg is passed as a function argument, hoisted into
+	// a module-level variable since it does not change between calls.
+	// Note: type arguments are stripped in emit, so getType<string>(...) becomes getType(...)
+	if !strings.Contains(appJS.Content, `getType((__ΩΩ0 || (__ΩΩ0 = ["&"])))`) {
+		t.Errorf("expected direct passing: getType((__ΩΩ0 || (__ΩΩ0 = [\"&\"])))")
 	}
 	// No Ω side-channel at call site
 	if strings.Contains(appJS.Content, "getType.Ω = [") {
@@ -1697,7 +1698,7 @@ export function fnDecl(x: any): ICfg { return localCast<ICfg>(x); }`
 	if strings.Contains(appJS.Content, "localCast(x)") {
 		t.Errorf("found a receive-type call that lost its type argument:\n%s", appJS.Content)
 	}
-	if n := strings.Count(appJS.Content, "localCast(x, ["); n != 4 {
+	if n := strings.Count(appJS.Content, `localCast(x, (__ΩΩ0 || (__ΩΩ0 = [() => __ΩICfg, "n!"])))`); n != 4 {
 		t.Errorf("expected 4 receive-type call sites with a passed type argument, found %d:\n%s", n, appJS.Content)
 	}
 }

@@ -230,7 +230,10 @@ export const x = obj;
 		{
 			name:     "PropertyDefaultsKeepCallSiteTypes",
 			files:    map[string]string{"app.ts": "export class M { m = new Map<string, number>(); }\n"},
-			contains: []string{`["m", function () { return (Map.Ω = [["&"], ["'"]], new Map()); }, "M", "!3!>\"5w#"]`},
+			// TS6 emitted the type arguments inline (`Map.Ω = [["&"], ["'"]]`);
+			// they are now hoisted into module-level variables (see
+			// hoist_type_arguments.go), which is equivalent at runtime.
+			contains: []string{`["m", function () { return (Map.Ω = [(__ΩΩ0 || (__ΩΩ0 = ["&"])), (__ΩΩ1 || (__ΩΩ1 = ["'"]))], new Map()); }, "M", "!3!>\"5w#"]`},
 		},
 		{
 			name: "ReExportsOnlyExistingOmegaSymbols",

@@ -173,7 +173,7 @@ func TestReceiveTypeSingleFile(t *testing.T) {
         getType<string>();`)
 
 		// Should have Ω side-channel (fallback when can't resolve)
-		assertContains(t, output, "getType.Ω = [")
+		assertContains(t, output, "getType.Ω = (__ΩΩ0 || (__ΩΩ0 = [")
 	})
 }
 

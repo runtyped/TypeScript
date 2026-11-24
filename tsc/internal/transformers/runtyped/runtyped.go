@@ -87,6 +87,12 @@ type reflectionTransformer struct {
 	// Optional chain transform state (per-file)
 	tempResultIdentifier    *ast.Node
 	optionalChainTransforms map[*ast.Node]*optionalChainInfo
+
+	// Call-site type arguments hoisted into module-level variables (per-file);
+	// see hoist_type_arguments.go.
+	hoistedTypeArgumentNames   map[string]string
+	hoistedTypeArgumentOrder   []string
+	hoistedTypeArgumentCounter int
 }
 
 // optionalChainInfo stores metadata about a transformed optional chain expression,
@@ -184,6 +190,9 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 	tx.additionalReExports = nil
 	tx.tempResultIdentifier = nil
 	tx.optionalChainTransforms = make(map[*ast.Node]*optionalChainInfo)
+	tx.hoistedTypeArgumentNames = make(map[string]string)
+	tx.hoistedTypeArgumentOrder = nil
+	tx.hoistedTypeArgumentCounter = 0
 	tx.sourceFile = node
 	tx.tc = newTypeCompiler(tx.EmitContext(), tx.emitResolver, tx.sourceFiles)
 	tx.tc.sourceFile = node
@@ -230,6 +239,11 @@ func (tx *reflectionTransformer) visitSourceFile(node *ast.SourceFile) *ast.Node
 			),
 		)
 		newTopStatements = append(newTopStatements, varDecl)
+	}
+
+	// Declare the variables of hoisted call-site type arguments
+	if decl := tx.hoistedTypeArgumentDeclarations(); decl != nil {
+		newTopStatements = append(newTopStatements, decl)
 	}
 
 	// Find "use strict" / "use client" directive to keep it at the top
@@ -1497,13 +1511,18 @@ func (tx *reflectionTransformer) handleTypeArgumentCall(node *ast.Node, isNew bo
 		// Inline arrow functions are excluded from type passing
 		return node
 	}
+	if callResult != nil && callResult.Kind == "skip" {
+		// Resolved target has no ReceiveType params — skip type passing
+		return node
+	}
+
+	// The type arguments are passed: hoist those that do not change between calls
+	for i, a := range typeArgs {
+		typeExpressions[i] = tx.hoistTypeArgument(a, typeExpressions[i])
+	}
 
 	// Try direct argument passing: use pre-resolved call target ReceiveType info
 	if callResult != nil {
-		if callResult.Kind == "skip" {
-			// Resolved target has no ReceiveType params — skip type passing
-			return node
-		}
 		// Direct passing: place type args at correct parameter positions
 		var existingArgs []*ast.Node
 		if isNew {

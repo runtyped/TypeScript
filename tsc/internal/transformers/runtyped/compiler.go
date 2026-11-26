@@ -1353,7 +1353,13 @@ func (tc *typeCompiler) extractTypeReferenceFromEntityName(typeName *ast.Node, t
 					sourceFile: declSourceFile,
 				}
 			} else if isFromImport {
-				if resolved.typeOnly {
+				// A type-only import (`import type`, `import { type X }`)
+				// never loads its module at runtime, so by default the type
+				// is any, as with @runtyped/type-compiler. With
+				// reflectTypeOnlyImports it is handled like a value import:
+				// `import { __ΩX }` is added when the module is known to
+				// define __ΩX (runtyped/runtyped#11).
+				if resolved.typeOnly && !tc.modes.reflectTypeOnlyImportsFor(tc.sourceFile) {
 					tc.resolveTypeOnlyImport(typeName, program)
 					return
 				}

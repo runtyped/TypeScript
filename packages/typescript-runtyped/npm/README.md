@@ -77,6 +77,31 @@ By default every file is reflected. A top-level `reflection` field in
 With `tsc -p`, the given `tsconfig.json` applies to every file in the program.
 Without it, each file uses the nearest `tsconfig.json` above it.
 
+### Type-only imports
+
+A type-only import (`import type { User }` or `import { type User }`) is
+dropped from the output, so its module is never loaded at run time. Without
+the module, the compiler cannot reach the type's reflection data, so `User` is
+reflected as `any`, and anything containing it validates less than it seems
+to: a union with a `User` member accepts every value.
+
+To reflect such types, use a plain import (`import { User }`), or set a
+top-level `reflectTypeOnlyImports` field in `tsconfig.json`. That field is
+inherited through `extends`, and you'll need it with `verbatimModuleSyntax`,
+which requires `import type` for types:
+
+```jsonc
+{
+  "reflectTypeOnlyImports": true
+}
+```
+
+With it, a type-only import of an interface or type alias is reflected like a
+plain import, and the compiled output imports the module at run time. This
+only applies when the module is known to carry reflection data: a `.ts` file
+that is reflected, or a `.d.ts` file that exports `__ΩUser`. Classes imported
+with `import type` are still reflected as `any`.
+
 This package is the compile-time counterpart to [@runtyped/type].
 
 ## Migrating from @runtyped/type-compiler

@@ -68,6 +68,19 @@ func (rc *ReflectionConfig) ModeFor(fileName string) config.Mode {
 	}, fileName)
 }
 
+// ReflectTypeOnlyImportsFor reports whether type-only imports in the file at
+// fileName are reflected (the `reflectTypeOnlyImports` field of tsconfig.json).
+// It is false without a tsconfig.json, or with a nil *ReflectionConfig.
+func (rc *ReflectionConfig) ReflectTypeOnlyImportsFor(fileName string) bool {
+	if rc == nil {
+		return false
+	}
+	rc.mu.Lock()
+	resolver := config.GetConfigResolver(rc.cache, rc.host, nil, struct{ FileName string }{fileName}, rc.configFilePath)
+	rc.mu.Unlock()
+	return resolver.Config.ReflectTypeOnlyImports
+}
+
 // fileModes resolves reflection modes for the files a transformer looks at.
 // A non-empty override (an explicit TransformOptions.ReflectionMode or
 // SetReflectionModeOverride) wins over tsconfig.json for every file.
@@ -84,4 +97,11 @@ func (m fileModes) modeFor(file *ast.SourceFile) string {
 		return string(config.ModeDefault)
 	}
 	return string(m.config.ModeFor(file.FileName().AsString()))
+}
+
+func (m fileModes) reflectTypeOnlyImportsFor(file *ast.SourceFile) bool {
+	if file == nil {
+		return false
+	}
+	return m.config.ReflectTypeOnlyImportsFor(file.FileName().AsString())
 }

@@ -37,9 +37,11 @@ type RawMode = any
 
 // TsConfigJson represents the runtyped-specific fields in a tsconfig.json.
 type TsConfigJson struct {
-	Extends                any `json:"extends"`
-	CompilerOptions        any `json:"compilerOptions"`
-	Reflection             RawMode
+	Extends         any `json:"extends"`
+	CompilerOptions any `json:"compilerOptions"`
+	Reflection      RawMode
+	// ReflectTypeOnlyImports is the raw reflectTypeOnlyImports value, nil when absent.
+	ReflectTypeOnlyImports any
 	DeepkitCompilerOptions *struct {
 		Reflection    RawMode  `json:"reflection"`
 		MergeStrategy string   `json:"mergeStrategy"`
@@ -54,6 +56,11 @@ type ResolvedConfig struct {
 	MergeStrategy   string
 	Reflection      any // string[] or Mode
 	Exclude         []string
+	// ReflectTypeOnlyImports makes type-only imports (`import type { X }`,
+	// `import { type X }`) of reflected types import __ΩX, like value
+	// imports do. Off by default: a type-only import then never loads its
+	// module at runtime, and the type is reflected as any.
+	ReflectTypeOnlyImports bool
 }
 
 // MatchResult is the result of matching a file path against the config.
@@ -361,6 +368,8 @@ type currentConfig struct {
 	reflection      any // Mode or []string
 	exclude         []string
 	extends         any
+	// reflectTypeOnlyImports is nil until a config in the chain sets it.
+	reflectTypeOnlyImports *bool
 }
 
 // applyConfigValues merges parent config values into the current config.
@@ -404,6 +413,13 @@ func applyConfigValues(existing *currentConfig, parent *TsConfigJson, baseDir st
 			}
 		}
 	}
+	// The first config in the chain that sets it wins, so a config overrides
+	// the ones it extends.
+	if existing.reflectTypeOnlyImports == nil {
+		if b, ok := parent.ReflectTypeOnlyImports.(bool); ok {
+			existing.reflectTypeOnlyImports = &b
+		}
+	}
 	existing.extends = parent.Extends
 }
 
@@ -435,6 +451,8 @@ func readTsConfig(host tsoptions.ParseConfigHost, configPath string) *TsConfigJs
 		Extends:         raw["extends"],
 		CompilerOptions: raw["compilerOptions"],
 		Reflection:      raw["reflection"],
+		// Only a boolean is meaningful; anything else is ignored.
+		ReflectTypeOnlyImports: raw["reflectTypeOnlyImports"],
 	}
 
 	if dko, ok := raw["deepkitCompilerOptions"].(map[string]any); ok {
@@ -564,6 +582,9 @@ func GetConfigResolver(
 		MergeStrategy:   config.mergeStrategy,
 		Reflection:      config.reflection,
 		Exclude:         config.exclude,
+	}
+	if config.reflectTypeOnlyImports != nil {
+		resolvedConfig.ReflectTypeOnlyImports = *config.reflectTypeOnlyImports
 	}
 
 	if resolvedConfig.MergeStrategy == "" {
